@@ -9,7 +9,9 @@
 #
 #  8-Feb-2024: Itai  Initial commit. Added the ket option.
 #
-#
+#  25-Feb-2024: Itai  Fixed a bug in insideout_ket: removed a conj() 
+#                     function on the BP message that was contracted to 
+#                     the bra tensor.
 #
 #
 #
@@ -41,9 +43,8 @@ def insideout_ket(T, in_m_list):
 	in_m_list --- The incoming messages. If T has k logical legs, then
 	              there would be k incoming messages, ordered by the legs.
 	              
-	              Each incoming message is a PSD [D_i,D_i] matrix.
-	              
-	              
+	              Each incoming message is a PSD [D_i,D^*_i] matrix, where
+	              D_i is the ket leg and D^*_i is the bra leg.
 	              
 	Output:
 	--------
@@ -70,14 +71,14 @@ def insideout_ket(T, in_m_list):
 	bra_Ts = [braT]
 	
 	#
-	# Contract messages legs_no-1, legs_no-1, ..., 1 to T_ket  AND
-	# 1, ..., legs_no-1 to Tbra
+	# Contract messages legs_no-1, legs_no-2, ..., 1 to T_ket  AND
+	# 1,2, ..., legs_no-1 to Tbra
 	#
 	
 	for leg in range(legs_no-1):
 		
 		ketT = tensordot(ketT, in_m_list[legs_no-1-leg], axes=([legs_no-leg],[0]))
-		braT = tensordot(braT, conj(in_m_list[leg]), axes=([1],[1]))
+		braT = tensordot(braT, in_m_list[leg], axes=([1],[1]))
 
 		ket_Ts.append(ketT)
 		bra_Ts.append(braT)
@@ -297,7 +298,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	
 	"""
 
-	log = True
+	log = False
 	
 	#
 	# First, create a dictonary that tells the vertices of each edge
