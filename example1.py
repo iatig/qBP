@@ -142,7 +142,7 @@ def create_example_TN(d, D):
 
 def main():
 	
-	random_seed = 2
+	random_seed = 3
 	
 	d = 2            # Physical bond dim
 	D = 5            # Logical bond dim
