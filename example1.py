@@ -18,7 +18,9 @@
 # History:
 # ---------
 #
-# 8-Feb-2024 --- Initial version (copied from the blockBP example1.py)
+# 8-Feb-2024  --- Initial version (copied from the blockBP example1.py)
+#
+# 29-May-2024 --- Removed TenQI,mpi4py dependence
 #
 #----------------------------------------------------------
 #
@@ -26,25 +28,15 @@
 
 import numpy as np
 
-from numpy.linalg import norm, svd, qr
+from numpy.linalg import norm
 
 from numpy import zeros, ones, array, tensordot, sqrt, diag, dot, \
 	reshape, transpose, conj, eye, trace, pi
 	
-from sys import exit
-
 from qbp import qbp
 
 from ncon import ncon
 
-import TenQI
-
-
-try:
-	from mpi4py import MPI
-except ImportError as e:
-	pass  # module doesn't exist, deal with it.
-	MPI=None
 
 
 #
