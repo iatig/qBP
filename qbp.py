@@ -13,7 +13,11 @@
 #                     function on the BP message that was contracted to 
 #                     the bra tensor.
 #
-#
+#  2-Jun-2024: Itai 1. Make the outgoing messages in insideout_ket 
+#                      explicitly hermitian
+#                   2. Normalize by L2 norm the outgoing messages
+#                   3. Change the way we calculate the err in the 
+#                      BP loop --- to better match the blockBP alg.
 #
 
 
@@ -122,6 +126,11 @@ def insideout_ket(T, in_m_list):
 		ket_axes = invL[:(legs_no-i)] + list(range(1, i+1))
 		
 		out_m = tensordot(ket_Ts[legs_no-i-1], bra_Ts[i], axes=(ket_axes, bra_axes))
+		
+		#
+		# Make the outgoing message explicitly hermitian
+		#
+		out_m = 0.5*(out_m + conj(out_m.T))
 		
 		out_m_list.append(out_m)
 		
@@ -370,7 +379,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 					ms = np.random.normal(size=[D,D])
 					message = ms@ms.T
 				else:
-					D = T_list[i].shape[leg]					
+					D = T_list[i].shape[leg]
 					message = abs(np.random.normal(size=D))
 					
 				m_list[i][j] = message/norm(message)
@@ -399,6 +408,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 		iter_no += 1
 
 		err = 0.0
+		err_n = 0
 		
 		#
 		# ---------------------------------------------------------------
@@ -446,11 +456,20 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			# Normalize the messages and update the main list of messages
 			#
 			for l in range(legs_no):
+				
+				out_m_list[l] = out_m_list[l]/norm(out_m_list[l])
+				
+				#
+				# Find the vertex j to which the message goes, and 
+				# then find the old i->j message.
+				#
+				
 				e = edges_list[i][l]
 				(i1,j1) = vertices[e]
 				j = (i1 if i1 !=i else j1)
 				
-				err += norm(m_list[i][j] - out_m_list[l]/norm(out_m_list[l]))**2
+				err += norm(m_list[i][j] - out_m_list[l])**2
+				err_n += 1
 				
 				message = (1-damping)*out_m_list[l] + damping*m_list[i][j]
 				
@@ -463,7 +482,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 		# of coordinates if we stack all messages as one huge vector
 		#
 		
-		err = sqrt(err)/n
+		err = sqrt(err)/err_n
 		
 		if log:
 			print("qbp iter {}: err = {}".format(iter_no,err))
