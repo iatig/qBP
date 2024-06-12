@@ -19,12 +19,28 @@
 #                   3. Change the way we calculate the err in the 
 #                      BP loop --- to better match the blockBP alg.
 #
+# 12-Jun-2024: Itai Have a more strtictly defined behaviour in 
+#                   the two cases: ket (quantum) , ketbra (classic).
+#                   ket is for double layer and ketbra is a normal
+#                   classical BP. This difference is apperant in:
+#                   1.  Initialization: in ket mode, use random 
+#                       PSD with trace=1
+#                       In ketbra mode  use uniform 1
+#                   2.  BP message normalization: in ket use trace=1
+#                       whereas in ketbra use sum(m)=1.
+#
+#                   In addition, change the BP normalization part: outgoing
+#                   messages are automatically normalized (each mode by
+#                   its own way). Then BP error is calculated using a 
+#                   normalized L_1 norm (in both cases).
+#                   
+#
 
 
 import numpy as np
 
 from numpy.linalg import norm
-from numpy import sqrt, tensordot, array, zeros, conj
+from numpy import sqrt, tensordot, array, zeros, ones, conj, trace
 
 
 
@@ -200,7 +216,7 @@ def insideout(T, in_m_list, direction='A'):
 	#
 
 		m = in_m_list[-1]
-		
+				
 		T1 = tensordot(T,m, axes=([legs_no-1],[0]))
 			
 			
@@ -247,6 +263,19 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	tensors, together with a corresponding list of labels of edges. Here, 
 	since we don't have any external edges, all labels must be positive 
 	integers.
+	
+	The BP has two modes:
+	1) If use_ket=True, then the tensors in T_list are of the form
+	   T[d, D0, D1, ..].
+	   
+	   When calculating the BP messages, we contract T with T^* online.
+	   
+	   The BP messages in such case are density matrices. We normalize 
+	   them so that they will have trace one.
+	   
+	2) if use_ket=False, we treat the problem as classical BP. The tensors
+	   in T_list are of the form T[D0, D1, ...], and the messages are
+	   vectors. We normalize them so that their *sum* is 1
 	
 	Parameters:
 	-----------
@@ -307,7 +336,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	
 	"""
 
-	log = False
+	log = True
 	
 	#
 	# First, create a dictonary that tells the vertices of each edge
@@ -330,11 +359,6 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			else:
 				vertices[e] = (i,i)
 				
-	if log:
-		print("vertices of edges:")
-		print(vertices)
-		
-
 		
 	#
 	# If m_list is empty, create an initial list of messages, where each
@@ -375,14 +399,19 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 				#
 				
 				if use_ket:
+					#
+					# Use random PSD
+					#
 					D = T_list[i].shape[leg+1]
 					ms = np.random.normal(size=[D,D])
 					message = ms@ms.T
+					message = message/trace(message)
 				else:
 					D = T_list[i].shape[leg]
-					message = abs(np.random.normal(size=D))
+					message = ones(D)
+					message = message/sum(message)
 					
-				m_list[i][j] = message/norm(message)
+				m_list[i][j] = message
 				
 	
 	#
@@ -456,8 +485,12 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			# Normalize the messages and update the main list of messages
 			#
 			for l in range(legs_no):
-				
-				out_m_list[l] = out_m_list[l]/norm(out_m_list[l])
+
+
+				if use_ket:
+					out_m_list[l] = out_m_list[l]/trace(out_m_list[l])
+				else:
+					out_m_list[l] = out_m_list[l]/sum(out_m_list[l])
 				
 				#
 				# Find the vertex j to which the message goes, and 
@@ -467,25 +500,29 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 				e = edges_list[i][l]
 				(i1,j1) = vertices[e]
 				j = (i1 if i1 !=i else j1)
-				
-				err += norm(m_list[i][j] - out_m_list[l])**2
+
+				#
+				# Calculate the L_1 normalized error (suitable both in ket and
+				# ketbra modes)
+				#
+				err += 2*norm(m_list[i][j] - out_m_list[l], ord=1) \
+					/(norm(out_m_list[l], ord=1) + norm(m_list[i][j], ord=1))
 				err_n += 1
 				
 				message = (1-damping)*out_m_list[l] + damping*m_list[i][j]
-				
-				message = message/norm(message)
-				
+								
 				m_list[i][j] = message
 		
 		# 
-		# The error is the average L_2 distance divided by the total number
+		# The error is the average L_1 distance divided by the total number
 		# of coordinates if we stack all messages as one huge vector
 		#
 		
-		err = sqrt(err)/err_n
+		err = err/err_n
 		
 		if log:
-			print("qbp iter {}: err = {}".format(iter_no,err))
+			print(f"qbp iter {iter_no}: BP-err = {err:.6g}")
+		
 	
 
 	return m_list, err, iter_no
