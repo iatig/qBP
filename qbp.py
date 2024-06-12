@@ -42,6 +42,9 @@
 #                   (uniform). Changed in function body edegs_list 
 #                   -> e_list. 
 #
+# 12-Jun-2024: Itai Added the get_Bethe_free_energy() function. 
+#                   Currently only works for the Classical case.
+#
 #                   
 #
 
@@ -49,7 +52,110 @@
 import numpy as np
 
 from numpy.linalg import norm
-from numpy import sqrt, tensordot, array, zeros, ones, conj, trace, eye
+from numpy import sqrt, tensordot, array, zeros, ones, conj, trace,\
+	eye, log
+
+
+
+#
+# ------------------  get_Bethe_free_energy   --------------------------
+#
+def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
+	
+	"""
+	
+	Given a TN and a converged set of BP messages, calculate the 
+	Bethe Free Energy F_bethe, which gives the BP approximation of the total
+	contraction of the TN:
+	
+	Tr(TN) ~ e^{-F_bethe}
+	
+	The calculation is done according to Lemma~III.1 in arXiv:2402.04834v2
+	
+	Input Parameters:
+	------------------
+	m_list --- converged BP messages. This is a double-list such that
+	           m_list[i][j]  is the converged i->j message.
+	           
+	T_list, e_list, e_dict --- TN structure.
+	
+	Output:
+	--------
+	F_bethe
+	
+	"""
+	
+	#
+	# Check if we're in quantum or classical mode
+	#
+	
+	if len(T_list[0].shape)==len(e_list[0]):
+		mode = 'C'
+	else:
+		mode = 'Q'
+	
+	#
+	# Currently, only Classical mode is implmented
+	#
+	if mode=='Q':
+		print("\n")
+		print("Error in qbp.get_Bethe_Free_Energy: Quantum mode (messages "\
+			"are matrices) has not been implemented yet.")
+			
+		exit(1)
+	
+	
+	n = len(T_list)
+	
+	#
+	# First, normalize the messages such that the inner product of 
+	# the messages along an edge = 1
+	#
+	nr_m_list = [[None]*n for i in range(n)]
+
+	for e in e_dict.keys():
+		
+		pair_i, pair_j = e_dict[e]
+		i, i_leg = pair_i
+		j, j_leg = pair_j
+		
+		nr = sqrt(sum(m_list[i][j]*m_list[j][i]))
+		
+		nr_m_list[i][j] = m_list[i][j]/nr
+		nr_m_list[j][i] = m_list[j][i]/nr
+					
+				
+	F_bethe = 0.0j
+	
+	#
+	# Run over all vertices and add up the log of the contraction of 
+	# the normalized incoming messages with T_i
+	#
+	for i in range(n):
+		
+		M = T_list[i]
+		for e in e_list[i]:
+			pair_i, pair_j = e_dict[e]
+			vi, i_leg = pair_i
+			vj, j_leg = pair_j
+			
+			if vi==i:
+				j=vj
+			else:
+				j=vi
+		
+			M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
+		
+		F_bethe = F_bethe - log(M)
+	
+	#
+	# If we're on the real case, drop the imaginary part
+	#
+	if abs(F_bethe.imag)<1e-13*abs(F_bethe):
+		F_bethe = F_bethe.real
+		
+	return F_bethe
+
 
 
 
