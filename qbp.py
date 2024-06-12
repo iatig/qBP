@@ -33,6 +33,15 @@
 #                   messages are automatically normalized (each mode by
 #                   its own way). Then BP error is calculated using a 
 #                   normalized L_1 norm (in both cases).
+#
+# 12-Jun-2024: Itai Removed the use_ket flag in qbp. Now it is 
+#                   automatically detected from comparing the shape
+#                   of T_list[0] to len(e_list[0]).  Changed input
+#                   parameter m_list -> inital_m. Now it can be 
+#                   either a messages list, or 'R' (random) or 'U' 
+#                   (uniform). Changed in function body edegs_list 
+#                   -> e_list. 
+#
 #                   
 #
 
@@ -40,7 +49,7 @@
 import numpy as np
 
 from numpy.linalg import norm
-from numpy import sqrt, tensordot, array, zeros, ones, conj, trace
+from numpy import sqrt, tensordot, array, zeros, ones, conj, trace, eye
 
 
 
@@ -73,7 +82,7 @@ def insideout_ket(T, in_m_list):
 	
 	
 	"""
-	
+		
 	legs_no = len(T.shape)-1
 	
 	
@@ -248,41 +257,35 @@ def insideout(T, in_m_list, direction='A'):
 # --------------------------- qbp --------------------------------
 #
 
-def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
-	delta=1e-6, damping=0.2, permute_order=False, use_ket=False):
+def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
+	delta=1e-6, damping=0.2, permute_order=False):
 
 	"""
 	
 	Runs a simple BP (belief Propagation) on a (closed) tensor network and 
-	obtains the converged messages. If the TN is a <bra|ket> of PEPS, then
-	the converged messages can be used to approximate the local 
-	environment of the spins. This approximation is equal to the
-	approximation of the simple update method.
+	obtains the converged messages. 
 	
-	The TN is described in the notation of the ncon routine: a list of 
-	tensors, together with a corresponding list of labels of edges. Here, 
-	since we don't have any external edges, all labels must be positive 
-	integers.
+	The TN can either be a quantum (<bra|ket> TN), in which case every 
+	tensor in T is given as T[d, D0, D1, ...] or it can be classical,
+	in which case every tensor is given as T[D0, D1, ...]
 	
-	The BP has two modes:
-	1) If use_ket=True, then the tensors in T_list are of the form
-	   T[d, D0, D1, ..].
-	   
-	   When calculating the BP messages, we contract T with T^* online.
-	   
-	   The BP messages in such case are density matrices. We normalize 
-	   them so that they will have trace one.
-	   
-	2) if use_ket=False, we treat the problem as classical BP. The tensors
-	   in T_list are of the form T[D0, D1, ...], and the messages are
-	   vectors. We normalize them so that their *sum* is 1
+	In the quantum case the messages are PSD matrices of shape [D,D]. In 
+	the classical case, they are vectors [D].
+	
+	The quantum/classical case is decided automatically by looking at 
+	the shape of the tensor T_list[0] --- to see if it has a physical leg
+	or not.
+	
+	(*) In the classical case, the messages are normalized so that sum(m)=1
+	(*) In the quantum, we normalize so that Tr(m)=1 
+	
 	
 	Parameters:
 	-----------
 	
 	T_list --- The list of tensors that make up the TN (like in ncon)
 	
-	edges_list ---	The labels of the edges (legs) of each tensor. This
+	e_list ---	The labels of the edges (legs) of each tensor. This
 									is a list of lists. For each tensor T with k legs
 									there is a list [e_0, e_1, ..., e_{k-1}] of the labels
 									of the legs. The same label must appear in the other
@@ -290,14 +293,13 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	               
 									Each label must be a positive integer.
 	               
-	m_list   ---		An optional initial list of messages. This is a double 
-									list. m_list[i][j] is the message i->j. This is a 
-									vector whose dimension should match that of the leg
-									that connects T_i with T_j.
-									
-									If m_list is not given, qbp starts with messages that
-									are made from normalized random vectors with positive
-									entries.
+	initial_m   --- An optional list of initial messages. It can also be 
+	                a string 'U' meaning unifrom initialization (1/D 
+	                vector in the classical case or Id/D matrix in the 
+	                quantum case), or it can be 'R', in which case we use
+	                random normalized vector vector in the classical case
+	                and a random PSD with Tr=1 in the quantum case).
+	
 									
 	max_iter ---		A upper bound for the maxmial number of iterations
 	
@@ -315,12 +317,6 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	                  updated in a random permutation of the vertices. 
 	                  Otherwise, it is done sequentially.
 	                  
-	use_ket     --- Whether or not the tensors are given as ket tensors.
-	                In such case, the first leg (leg 0) is always the 
-	                physical leg. The BP then contract the ket+bra 
-	                online. In such case, the output messages are 
-	                [D,D] matrices.
-	                  
 	
 	Output:
 	-------
@@ -328,7 +324,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	The list of converged messages. This is a double list m_list[i][j]
 	which holds the i->j message.
 	
-	When use_ket=True, the each message is a matrix [D,D]. Otherwise, 
+	In the quantum case, the each message is a matrix [D,D]. Otherwise, 
 	It is a vector [D]
 
 	
@@ -336,10 +332,23 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	
 	"""
 
-	log = True
+	log = False
 	
 	#
-	# First, create a dictonary that tells the vertices of each edge
+	# First check if we are classical (ketbra) or quantum (ket).
+	# In the quantum leg the tensors have a physical leg, and the actual
+	# BP message is calculated by contracting T and T^* along that 
+	# physical leg. 
+	#
+	
+	if len(T_list[0].shape)==len(e_list[0]):
+		mode='C'  # Classical mode
+	else:
+		mode='Q'  # Quantum mode (there's an extra phyiscal leg)
+		
+	
+	#
+	# Create a dictonary that tells the vertices of each edge
 	# For positive (internal) edge, the value of the dictonary is (i,j), 
 	# where i,j are the vertices connected by it. For negative edges
 	# its (i,i).
@@ -350,7 +359,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	n = len(T_list)
 	
 	for i in range(n):
-		i_edges = edges_list[i]
+		i_edges = e_list[i]
 		for e in i_edges:
 						
 			if e in vertices:
@@ -359,38 +368,40 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			else:
 				vertices[e] = (i,i)
 				
-		
+
 	#
-	# If m_list is empty, create an initial list of messages, where each
-	# message is a normalized random vector with positive entries
+	# If initial_m is given as a list of messages --- it is the list
+	# of initial messages to use. Otherwise, it is a string 'R' or 'U', 
+	# telling us what kind of initial messages to create.
 	#
-	
-	if m_list is None:
+
+	if type(initial_m) is list:
+		m_list = initial_m
+	else:
 
 		#
+		# In such case we should create the initial messages. We first
 		# initialize a 2D list of size n\times n which holds the i->j
 		# message
 		#
 		
 		m_list = [ [None]*n for i in range(n)]  
-		
+				
 		#
 		# Go over all tensors, and for each tensor i go over its legs, and 
 		# find its neighbors j
 		#
 		for i in range(n):
 			
-			no_legs = len(edges_list[i])
+			no_legs = len(e_list[i])
 			
 			for leg in range(no_legs):
-				
 					
-				e = edges_list[i][leg]
+				e = e_list[i][leg]
 				
 				(i1,j1) = vertices[e]
 				
 				j = (i1 if i1 !=i else j1)
-				
 						
 				#
 				# Now assign a normalized random message. When in a ket mode, 
@@ -398,17 +409,34 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 				# D vector.
 				#
 				
-				if use_ket:
+				if mode=='Q':
 					#
-					# Use random PSD
+					# We are on quantum mode --- our messages are PSD matrices
 					#
 					D = T_list[i].shape[leg+1]
-					ms = np.random.normal(size=[D,D])
-					message = ms@ms.T
-					message = message/trace(message)
+					
+					if initial_m=='R':
+						#
+						# Use random PSD
+						#
+						ms = np.random.normal(size=[D,D])
+						message = ms@ms.T
+						message = message/trace(message)
+					else:
+						message = eye(D)/D
+						
 				else:
+					#
+					# We are on classical mode --- our messages are vectors
+					#
+					
 					D = T_list[i].shape[leg]
-					message = ones(D)
+					
+					if initial_m =='R':
+						message = np.random.uniform(size=[D])
+					else:
+						message = ones(D)
+						
 					message = message/sum(message)
 					
 				m_list[i][j] = message
@@ -423,13 +451,13 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 	
 	if log:
 		
-		if use_ket:
-			mode_s='ket'
+		if mode=='C':
+			mode_s='Classical'
 		else:
-			mode_s = 'ket-bra'
+			mode_s = 'Quantum'
 		
 		print("\n\n")
-		print(f"Entering main qbp loop (in {mode_s} mode)")
+		print(f"Entering main qbp loop in {mode_s} mode")
 		print("-----------------------------------------\n")
 
 	while err>delta and iter_no < max_iter:
@@ -459,14 +487,14 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 		for i in vertices_order:
 				
 			T = T_list[i]
-			legs_no = len(edges_list[i])
+			legs_no = len(e_list[i])
 						
 			# 
 			# create a list of incoming messages
 			#
 			in_m_list = []   
 			for l in range(legs_no):
-				e = edges_list[i][l]
+				e = e_list[i][l]
 				(i1,j1) = vertices[e]
 				j = (i1 if i1 !=i else j1)
 				in_m_list.append(m_list[j][i])
@@ -476,7 +504,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			# Calculate the outgoing messages using the insideout routine
 			# (either in ket mode or in the usual ket-bra mode)
 			#
-			if use_ket:
+			if mode=='Q':
 				out_m_list = insideout_ket(T, in_m_list)
 			else:
 				out_m_list = insideout(T, in_m_list)
@@ -487,7 +515,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 			for l in range(legs_no):
 
 
-				if use_ket:
+				if mode=='Q':
 					out_m_list[l] = out_m_list[l]/trace(out_m_list[l])
 				else:
 					out_m_list[l] = out_m_list[l]/sum(out_m_list[l])
@@ -497,7 +525,7 @@ def qbp(T_list, edges_list, m_list=None, max_iter=10000, \
 				# then find the old i->j message.
 				#
 				
-				e = edges_list[i][l]
+				e = e_list[i][l]
 				(i1,j1) = vertices[e]
 				j = (i1 if i1 !=i else j1)
 
