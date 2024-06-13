@@ -45,6 +45,7 @@
 # 12-Jun-2024: Itai Added the get_Bethe_free_energy() function. 
 #                   Currently only works for the Classical case.
 #
+# 14-Jun-2024: Itai Updated the form of e_dict to (i,i_leg, j,j_leg)
 #                   
 #
 
@@ -115,9 +116,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 
 	for e in e_dict.keys():
 		
-		pair_i, pair_j = e_dict[e]
-		i, i_leg = pair_i
-		j, j_leg = pair_j
+		i,i_leg, j,j_leg = e_dict[e]
 		
 		nr = sqrt(sum(m_list[i][j]*m_list[j][i]))
 		
@@ -135,9 +134,8 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		
 		M = T_list[i]
 		for e in e_list[i]:
-			pair_i, pair_j = e_dict[e]
-			vi, i_leg = pair_i
-			vj, j_leg = pair_j
+			
+			vi,i_leg, vj,j_leg = e_dict[e]
 			
 			if vi==i:
 				j=vj
