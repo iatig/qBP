@@ -22,6 +22,10 @@
 #
 # 29-May-2024 --- Removed TenQI,mpi4py dependence
 #
+# 13-Jun-2024 --- Adjust to recent changes in qbp.py, i.e., removal
+#                 of is_ket, and use of initial_m. Also improve 
+#                 text messages.
+#
 #----------------------------------------------------------
 #
 
@@ -177,14 +181,14 @@ def main():
 	else:
 		BP_tensors = T_list
 
-	m_list, err, iter_no = qbp(BP_tensors, edges_list,  \
+	print("Running BP...")
+
+	m_list, err, iter_no = qbp(BP_tensors, edges_list,  initial_m='U', \
 			max_iter=max_iterations, delta=delta_err, \
-			damping=damping_rate, use_ket=ket)
+			damping=damping_rate)
 		
 	print(f"... done with {iter_no} iterations and BP messages error={err}")
 
-	print("\n\n\n")
-	
 
 	#
 	# Once the qBP is over, we use the converged messages to calculate
@@ -228,6 +232,9 @@ def main():
 	# ================================================================
 	#
 	
+	print("\n\n")
+	print("Runnning ncon...")
+	
 	D2 = D*D
 	
 	newT0 = tensordot(obs, T0, axes=([0],[0]))
@@ -248,6 +255,7 @@ def main():
 	
 	av_ncon = enumerator/denominator
 
+	print("... done.\n\n")
 
 	#	
 	# ================================================================
