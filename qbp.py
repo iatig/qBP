@@ -47,6 +47,9 @@
 #
 # 14-Jun-2024: Itai Updated the form of e_dict to (i,i_leg, j,j_leg)
 #                   
+# 14-Jun-2024: Itai Add the calc_e_dict to the module. Add an optional
+#                   e_dict parameter to qbp() and use it to replace
+#                   the vertices dictionary
 #
 
 
@@ -55,6 +58,57 @@ import numpy as np
 from numpy.linalg import norm
 from numpy import sqrt, tensordot, array, zeros, ones, conj, trace,\
 	eye, log
+
+
+
+
+
+
+
+#
+# ---------------------------- calc_e_dict  ----------------------------
+#
+
+def calc_e_dict(e_list):
+	"""
+	
+	Given an edge structure in the form of e_list, calculate the edges
+	dictionary. This is a dictionary in which the key is an edge. 
+	
+	The value of each edge e=(i,j) is a 4-taple: 
+	
+	                (i,leg_i, j,leg_j)
+	                
+	where leg_i, leg_j are the indices of the leg e in the tensors at i
+	and j and i<j.
+	
+	
+	"""
+	
+	e_dict = {}
+	
+	for j,es in enumerate(e_list):
+		
+		for leg_j,e in enumerate(es):
+			
+			if e in e_dict.keys():
+				#
+				# If the edge already exists in the dictionary, then this is the
+				# second vertex --- then add it to form a 4 taple
+				#   (i,leg_i, j,leg_j)
+				#
+				
+				i, leg_i = e_dict[e]
+				
+				e_dict[e] = (i,leg_i, j,leg_j)
+					
+			else:
+				#
+				# If the edge does not exist --- we just add this vertex
+				#
+				e_dict[e] = (j, leg_j)
+
+	return e_dict
 
 
 
@@ -361,7 +415,7 @@ def insideout(T, in_m_list, direction='A'):
 # --------------------------- qbp --------------------------------
 #
 
-def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
+def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	delta=1e-6, damping=0.2, permute_order=False):
 
 	"""
@@ -396,6 +450,14 @@ def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
 									tensor with which the leg is contracted.
 	               
 									Each label must be a positive integer.
+									
+	e_dict   --- A complementary structure to e_list. It is a dictionary
+	             where the keys are the edges labels, and the value
+	             is a 4-taple (i,i_leg, j, j_leg) with i<j.
+	             
+	             It is completely derivable from e_list. If omitted, 
+	             it is calculated at the begining of the function.
+									
 	               
 	initial_m   --- An optional list of initial messages. It can also be 
 	                a string 'U' meaning unifrom initialization (1/D 
@@ -452,26 +514,13 @@ def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
 		
 	
 	#
-	# Create a dictonary that tells the vertices of each edge
-	# For positive (internal) edge, the value of the dictonary is (i,j), 
-	# where i,j are the vertices connected by it. For negative edges
-	# its (i,i).
+	# If e_dict is not given, then calculate it
 	#
 	
-	vertices = {}
-		
+	if e_dict is None:
+		e_dict = calc_e_dict(e_list)
+
 	n = len(T_list)
-	
-	for i in range(n):
-		i_edges = e_list[i]
-		for e in i_edges:
-						
-			if e in vertices:
-				(j1,j2) = vertices[e]
-				vertices[e] = (i,j1)
-			else:
-				vertices[e] = (i,i)
-				
 
 	#
 	# If initial_m is given as a list of messages --- it is the list
@@ -503,7 +552,8 @@ def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
 					
 				e = e_list[i][leg]
 				
-				(i1,j1) = vertices[e]
+				i1,i1_leg, j1,j1_leg=e_dict[e]
+				
 				
 				j = (i1 if i1 !=i else j1)
 						
@@ -599,7 +649,9 @@ def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
 			in_m_list = []   
 			for l in range(legs_no):
 				e = e_list[i][l]
-				(i1,j1) = vertices[e]
+				
+				i1,i1_leg, j1, j1_leg = e_dict[e]
+				
 				j = (i1 if i1 !=i else j1)
 				in_m_list.append(m_list[j][i])
 				
@@ -630,7 +682,8 @@ def qbp(T_list, e_list, initial_m='U', max_iter=10000, \
 				#
 				
 				e = e_list[i][l]
-				(i1,j1) = vertices[e]
+				
+				i1,i1_leg, j1,j1_leg = e_dict[e]
 				j = (i1 if i1 !=i else j1)
 
 				#
