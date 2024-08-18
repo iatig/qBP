@@ -51,12 +51,15 @@
 #                   e_dict parameter to qbp() and use it to replace
 #                   the vertices dictionary
 #
+# 18-Aug-2024: Itai get_Bethe_free_energy: now works also from quantum
+#                   messages (matrices)
+#
 
 
 import numpy as np
 
 from numpy.linalg import norm
-from numpy import sqrt, tensordot, array, zeros, ones, conj, trace,\
+from numpy import sqrt, dot, tensordot, array, zeros, ones, conj, trace,\
 	eye, log
 
 
@@ -149,16 +152,6 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	else:
 		mode = 'Q'
 	
-	#
-	# Currently, only Classical mode is implmented
-	#
-	if mode=='Q':
-		print("\n")
-		print("Error in qbp.get_Bethe_Free_Energy: Quantum mode (messages "\
-			"are matrices) has not been implemented yet.")
-			
-		exit(1)
-	
 	
 	n = len(T_list)
 	
@@ -166,17 +159,41 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	# First, normalize the messages such that the inner product of 
 	# the messages along an edge = 1
 	#
+	# Tr( m_{i\to j} \cdot m_{j\to i} ) = 1
+	#
+	# See Lemma III.1 in the blockBP paper, arXiv:2402.04834
+	#
 	nr_m_list = [[None]*n for i in range(n)]
 
-	for e in e_dict.keys():
+	if mode=='C':
 		
-		i,i_leg, j,j_leg = e_dict[e]
+		#
+		# We're on classical mode; messages are vectors
+		#
 		
-		nr = sqrt(sum(m_list[i][j]*m_list[j][i]))
+		for e in e_dict.keys():
+			
+			i,i_leg, j,j_leg = e_dict[e]
+			
+			nr = sqrt(sum(m_list[i][j]*m_list[j][i]))
+			
+			nr_m_list[i][j] = m_list[i][j]/nr
+			nr_m_list[j][i] = m_list[j][i]/nr
+	else:
 		
-		nr_m_list[i][j] = m_list[i][j]/nr
-		nr_m_list[j][i] = m_list[j][i]/nr
-					
+		#
+		# We're on quantum mode; messages are matrices
+		#
+		
+		for e in e_dict.keys():
+			
+			i,i_leg, j,j_leg = e_dict[e]
+
+			nr = sqrt(trace( m_list[i][j]@(m_list[j][i]).T ))
+						
+			nr_m_list[i][j] = m_list[i][j]/nr
+			nr_m_list[j][i] = m_list[j][i]/nr
+			
 				
 	F_bethe = 0.0j
 	
@@ -184,25 +201,63 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	# Run over all vertices and add up the log of the contraction of 
 	# the normalized incoming messages with T_i
 	#
-	for i in range(n):
-		
-		M = T_list[i]
-		for e in e_list[i]:
+	
+	if mode=='C':
+		#
+		# Classical mode
+		#
+		for i in range(n):
 			
-			vi,i_leg, vj,j_leg = e_dict[e]
+			M = T_list[i]
+			for e in e_list[i]:
+				
+				vi,i_leg, vj,j_leg = e_dict[e]
+				
+				if vi==i:
+					j=vj
+				else:
+					j=vi
 			
-			if vi==i:
-				j=vj
-			else:
-				j=vi
-		
-			M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
-		
-		F_bethe = F_bethe - log(M)
+				M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
+			
+			F_bethe = F_bethe - log(M)
+			
+	else:
+		#
+		# Quantum mode
+		#
+	
+		for i in range(n):
+			
+			M = T_list[i]
+			for e in e_list[i]:
+				
+				vi,i_leg, vj,j_leg = e_dict[e]
+				
+				if vi==i:
+					j=vj
+				else:
+					j=vi
+			
+				M = tensordot(M, nr_m_list[j][i],axes=([1],[0]))
+				
+			M = dot(M.flatten(), conj(T_list[i].flatten()))
+			
+			#
+			# At this point, M is the contraction of the ket with all the 
+			# ket-legs of the incoming messages. We now contract this with 
+			# the bra
+			#
+			
+			F_bethe = F_bethe - log(M)
+	
+	
+	
 	
 	#
 	# If we're on the real case, drop the imaginary part
 	#
+	
 	if abs(F_bethe.imag)<1e-13*abs(F_bethe):
 		F_bethe = F_bethe.real
 		
