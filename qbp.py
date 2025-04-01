@@ -54,6 +54,10 @@
 # 18-Aug-2024: Itai get_Bethe_free_energy: now works also from quantum
 #                   messages (matrices)
 #
+#
+# 1-Apr-2025:  Itai In get_Bethe_free_energy, make sure M is complex 
+#                   when taking log(M)
+#
 
 
 import numpy as np
@@ -194,7 +198,6 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			nr_m_list[i][j] = m_list[i][j]/nr
 			nr_m_list[j][i] = m_list[j][i]/nr
 			
-				
 	F_bethe = 0.0j
 	
 	#
@@ -220,7 +223,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			
 				M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
 			
-			F_bethe = F_bethe - log(M)
+			F_bethe = F_bethe - log(M.astype(np.complex128))
 			
 	else:
 		#
@@ -249,7 +252,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			# the bra
 			#
 			
-			F_bethe = F_bethe - log(M)
+			F_bethe = F_bethe - log(M.astype(np.complex128))
 	
 	
 	
