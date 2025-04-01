@@ -58,13 +58,15 @@
 # 1-Apr-2025:  Itai In get_Bethe_free_energy, make sure M is complex 
 #                   when taking log(M)
 #
+# 1-Apr-2025:  Itai Fix the truncation to real in get_Bethe_free_energy
+#
 
 
 import numpy as np
 
 from numpy.linalg import norm
 from numpy import sqrt, dot, tensordot, array, zeros, ones, conj, trace,\
-	eye, log
+	eye, log, pi
 
 
 
@@ -223,7 +225,9 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			
 				M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
 			
-			F_bethe = F_bethe - log(M.astype(np.complex128))
+			M = M.astype(np.complex128)
+			F_bethe = F_bethe - log(M)
+			print(f"M={M}  log={log(M)}")
 			
 	else:
 		#
@@ -258,10 +262,19 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	
 	
 	#
+	# Make the imaginary part minimal (rememeber that 2*pi multiples do
+	# not matter)
+	#
+	F_bethe_i = F_bethe.imag % (2*pi)
+	if F_bethe_i>2*pi-F_bethe_i:
+		F_bethe_i = F_bethe_i - 2*pi
+	
+	F_bethe = F_bethe.real + 1j*F_bethe_i
+	
+	#
 	# If we're on the real case, drop the imaginary part
 	#
-	
-	if abs(F_bethe.imag)<1e-13*abs(F_bethe):
+	if abs(F_bethe.imag)<1e-10*abs(F_bethe):
 		F_bethe = F_bethe.real
 		
 	return F_bethe
