@@ -227,7 +227,6 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			
 			M = M.astype(np.complex128)
 			F_bethe = F_bethe - log(M)
-			print(f"M={M}  log={log(M)}")
 			
 	else:
 		#
