@@ -60,6 +60,22 @@
 #
 # 1-Apr-2025:  Itai Fix the truncation to real in get_Bethe_free_energy
 #
+# 20-Jun-2025: Itai changes in:
+#              (1) get_Bethe_free_energy:
+#                  - Instead of normalizing the messages by their 
+#                    overlap, we directly add the log of this overlap to
+#                    the Bethe free energy.
+#                  - Made it more robust to edge cases where we attempt 
+#                    to take the log or exponent of very large numbers
+#
+#              (2) qbp: add a flag normalzie_it that decides if to 
+#                       normalize the outgoing messages. This happens 
+#                       only if their norm sufficiently large 
+#                       (either L_1 in classical case or L_2 in quantum case)
+#
+#
+#
+#
 
 
 import numpy as np
@@ -135,7 +151,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	Tr(TN) ~ e^{-F_bethe}
 	
 	The calculation is done according to Lemma~III.1 in arXiv:2402.04834v2
-	
+		
 	Input Parameters:
 	------------------
 	m_list --- converged BP messages. This is a double-list such that
@@ -148,14 +164,25 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	F_bethe
 	
 	"""
+
+	Log = False
+	
+	EPS    = 1e-15
+	BIGLOG = 50
 	
 	#
 	# Check if we're in quantum or classical mode
 	#
 	
 	if len(T_list[0].shape)==len(e_list[0]):
+		#
+		# Classical mode --- there's no physical leg to the local tensor
+		#
 		mode = 'C'
 	else:
+		#
+		# Quantum mode --- local tensor has a phyical leg
+		#
 		mode = 'Q'
 	
 	
@@ -169,38 +196,56 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	#
 	# See Lemma III.1 in the blockBP paper, arXiv:2402.04834
 	#
-	nr_m_list = [[None]*n for i in range(n)]
+	# Alternatively, instead of normalizing the messages by their 
+	# overlap, we directly add the log of this overlap to the Bethe 
+	# free energy.
+	#
 
-	if mode=='C':
 		
-		#
-		# We're on classical mode; messages are vectors
-		#
-		
-		for e in e_dict.keys():
-			
-			i,i_leg, j,j_leg = e_dict[e]
-			
-			nr = sqrt(sum(m_list[i][j]*m_list[j][i]))
-			
-			nr_m_list[i][j] = m_list[i][j]/nr
-			nr_m_list[j][i] = m_list[j][i]/nr
-	else:
-		
-		#
-		# We're on quantum mode; messages are matrices
-		#
-		
-		for e in e_dict.keys():
-			
-			i,i_leg, j,j_leg = e_dict[e]
-
-			nr = sqrt(trace( m_list[i][j]@(m_list[j][i]).T ))
-						
-			nr_m_list[i][j] = m_list[i][j]/nr
-			nr_m_list[j][i] = m_list[j][i]/nr
-			
 	F_bethe = 0.0j
+		
+	for e in e_dict.keys():
+		
+		i,i_leg, j,j_leg = e_dict[e]
+
+		
+		if mode=='C':
+			#
+			# We're on classical mode; messages are vectors
+			#
+			msg_overlap = sum(m_list[i][j]*m_list[j][i])
+		else:
+			#
+			# We're on quantum mode; messages are matrices
+			#
+			msg_overlap = trace( m_list[i][j]@(m_list[j][i]).T )
+		
+		#
+		# We need to be careful when adding the log of the message-overlap.
+		# It can be zero (or very close to zero), and it can also be 
+		# negative. Therefore, we must work in complex numbers and also 
+		# check the absolute value before taking the log.
+		#
+		nr = sqrt(abs(msg_overlap))
+		
+		if nr<EPS*max(norm(m_list[i][j]), norm(m_list[j][i]),1e-20):
+			F_bethe += -BIGLOG
+			
+			if Log:
+				print("Warnning: small message overlap in get_Bethe_free_energy!")
+				print(f"message-overlap: {msg_overlap:.6g}")
+				print(f"msg({i}->{j}) norm: {norm(m_list[i][j]):.6g}      " \
+					f"msg({j}->{i}) norm: {norm(m_list[j][i]):.6g} " )
+				print()
+		else:
+			try:
+				F_bethe += log(msg_overlap.astype(np.complex128))
+			except FloatingPointError:
+				print("error: msg_overlap=",msg_overlap, "nr=", nr)
+				print("message norms: ", norm(m_list[i][j]), norm(m_list[j][i]))
+				exit(0)
+					
+		
 	
 	#
 	# Run over all vertices and add up the log of the contraction of 
@@ -223,10 +268,23 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 				else:
 					j=vi
 			
-				M = tensordot(M, nr_m_list[j][i],axes=([0],[0]))
+				M = tensordot(M, m_list[j][i],axes=([0],[0]))
 			
-			M = M.astype(np.complex128)
-			F_bethe = F_bethe - log(M)
+			#
+			# If M is too small, we just increase F_bethe by some
+			# insane amount
+			#
+			if abs(M)<EPS*norm(T_list[i]):
+				F_bethe += BIGLOG
+
+				if Log:
+					print("Warnning: small local contribution in get_Bethe_free_energy!")
+					print(f"Local contrib at vertex {i}: {M:.6g}    "\
+						f"norm(T[{i}]) = {norm(T_list[i]):.6g}")
+					print()
+			else:
+				F_bethe += -log(M.astype(np.complex128))
+				
 			
 	else:
 		#
@@ -245,7 +303,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 				else:
 					j=vi
 			
-				M = tensordot(M, nr_m_list[j][i],axes=([1],[0]))
+				M = tensordot(M, m_list[j][i],axes=([1],[0]))
 				
 			M = dot(M.flatten(), conj(T_list[i].flatten()))
 			
@@ -257,27 +315,23 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			
 			F_bethe = F_bethe - log(M.astype(np.complex128))
 	
-	
-	
-	
 	#
 	# Make the imaginary part minimal (rememeber that 2*pi multiples do
-	# not matter)
+	# not matter because Tr(TN)=exp(-F_bethe) )
 	#
+	# Also, if we are very close the positive real axis, then probably
+	# we're on a classical settings, and so just ignore the imaginary
+	# part of the Bethe energy, and output a real number.
+	#
+
 	F_bethe_i = F_bethe.imag % (2*pi)
-	if F_bethe_i>2*pi-F_bethe_i:
-		F_bethe_i = F_bethe_i - 2*pi
 	
-	F_bethe = F_bethe.real + 1j*F_bethe_i
-	
-	#
-	# If we're on the real case, drop the imaginary part
-	#
-	if abs(F_bethe.imag)<1e-10*abs(F_bethe):
+	if min(abs(F_bethe_i), abs(F_bethe_i-2*pi)) < EPS*abs(F_bethe):
 		F_bethe = F_bethe.real
+	else:
+		F_bethe = F_bethe.real + 1j*F_bethe_i
 		
 	return F_bethe
-
 
 
 
@@ -742,10 +796,14 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 
 
 				if mode=='Q':
-					out_m_list[l] = out_m_list[l]/trace(out_m_list[l])
+					nr = trace(out_m_list[l])
 				else:
-					out_m_list[l] = out_m_list[l]/sum(out_m_list[l])
-				
+					nr=sum(out_m_list[l])
+					
+				normalize_it = (abs(nr)>norm(T)*1e-15)
+				if normalize_it:
+					out_m_list[l] = out_m_list[l]/nr
+								
 				#
 				# Find the vertex j to which the message goes, and 
 				# then find the old i->j message.
@@ -760,9 +818,10 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 				# Calculate the L_1 normalized error (suitable both in ket and
 				# ketbra modes)
 				#
-				err += 2*norm(m_list[i][j] - out_m_list[l], ord=1) \
-					/(norm(out_m_list[l], ord=1) + norm(m_list[i][j], ord=1))
-				err_n += 1
+				if normalize_it:
+					err += 2*norm(m_list[i][j] - out_m_list[l], ord=1) \
+						/(norm(out_m_list[l], ord=1) + norm(m_list[i][j], ord=1))
+					err_n += 1
 				
 				message = (1-damping)*out_m_list[l] + damping*m_list[i][j]
 								
