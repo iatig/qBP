@@ -9,11 +9,11 @@
 #
 #  8-Feb-2024: Itai  Initial commit. Added the ket option.
 #
-#  25-Feb-2024: Itai  Fixed a bug in insideout_ket: removed a conj() 
+#  25-Feb-2024: Itai  Fixed a bug in insideout_DL: removed a conj() 
 #                     function on the BP message that was contracted to 
 #                     the bra tensor.
 #
-#  2-Jun-2024: Itai 1. Make the outgoing messages in insideout_ket 
+#  2-Jun-2024: Itai 1. Make the outgoing messages in insideout_DL 
 #                      explicitly hermitian
 #                   2. Normalize by L2 norm the outgoing messages
 #                   3. Change the way we calculate the err in the 
@@ -74,6 +74,20 @@
 #                       (either L_1 in classical case or L_2 in quantum case)
 #
 #
+# 14-Aug-2025: Itai Many changes: 
+#                   (1) rename insideout_ket -> insideout_DL
+#                              inside_out -> insideout_SL
+#                   (2) renamed modes in qbp: 'Q' -> DL, 'C' -> SL
+#                   (3) changed normalization of BP messages:
+#                       SL: normalize by L_1 and then by phase of sum
+#                       DL: normalize by L_1 (nuc norm) and the by phase
+#                           of trace.
+#                   (4) Accordingly the distance is also L_1 in both
+#                       cases (changed the DL to ord='nuc' so that it 
+#                       uses the matrix L_1 norm).
+#
+#
+#
 #
 #
 
@@ -81,7 +95,7 @@
 import numpy as np
 
 from numpy.linalg import norm
-from numpy import sqrt, dot, tensordot, array, zeros, ones, conj, trace,\
+from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 	eye, log, pi
 
 
@@ -185,7 +199,9 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		#
 		mode = 'Q'
 	
-	
+	if Log:
+		print(f"Entering get_Bethe_free_energy in {mode} mode")
+		
 	n = len(T_list)
 	
 	#
@@ -336,12 +352,14 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 
 
 #
-# ----------------------- insideout_ket --------------------------------
+# ----------------------- insideout_DL --------------------------------
 #
 
-def insideout_ket(T, in_m_list):
+def insideout_DL(T, in_m_list):
 	
 	"""
+	
+	A DOUBLE-LAYER inside-out
 	
 	Given a ket tensor T and a list of incoming messages, calculate the 
 	outgoing BP messages
@@ -447,12 +465,14 @@ def insideout_ket(T, in_m_list):
 
 
 #
-# ----------------------- insideout --------------------------------
+# ----------------------- insideout_SL --------------------------------
 #
 
-def insideout(T, in_m_list, direction='A'):
+def insideout_SL(T, in_m_list, direction='A'):
 	
 	"""
+	
+	A SINGLE-LAYER inside-out
 	
 	Takes a tensor T_{i_0,..., i_{k-1}} and the set of *incoming* messages
 	m_{i_0}, ..., m_{i_{k-1}} to each one of its legs, and computes the 
@@ -511,7 +531,7 @@ def insideout(T, in_m_list, direction='A'):
 		T1 = tensordot(T,m, axes=([legs_no-1],[0]))
 			
 			
-		out_m_list = insideout(T1, in_m_list[:(legs_no-1)], 'D')
+		out_m_list = insideout_SL(T1, in_m_list[:(legs_no-1)], 'D')
 		
 	else:
 	#
@@ -520,11 +540,11 @@ def insideout(T, in_m_list, direction='A'):
 	#                obtain the messages of i_1, i_2, ...
 	#
 
-		out_m_list1 = insideout(T, in_m_list, 'D')  
+		out_m_list1 = insideout_SL(T, in_m_list, 'D')  
 	
 		m = in_m_list[0]
 		T1 = tensordot(T,m, axes=([0],[0]))
-		out_m_list2 = insideout(T1, in_m_list[1:], 'A') 
+		out_m_list2 = insideout_SL(T1, in_m_list[1:], 'A') 
 		
 		out_m_list = out_m_list1 + out_m_list2
 		
@@ -632,9 +652,9 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	#
 	
 	if len(T_list[0].shape)==len(e_list[0]):
-		mode='C'  # Classical mode
+		mode='SL'  # Single-Layer mode
 	else:
-		mode='Q'  # Quantum mode (there's an extra phyiscal leg)
+		mode='DL'  # Double-Layer mode (there's an extra phyiscal leg)
 		
 	
 	#
@@ -687,9 +707,9 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 				# D vector.
 				#
 				
-				if mode=='Q':
+				if mode=='DL':
 					#
-					# We are on quantum mode --- our messages are PSD matrices
+					# We are on double-layer mode --- our messages are PSD matrices
 					#
 					D = T_list[i].shape[leg+1]
 					
@@ -705,7 +725,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 						
 				else:
 					#
-					# We are on classical mode --- our messages are vectors
+					# We are on Single-Layer mode --- our messages are vectors
 					#
 					
 					D = T_list[i].shape[leg]
@@ -729,14 +749,14 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	
 	if log:
 		
-		if mode=='C':
-			mode_s='Classical'
+		if mode=='SL':
+			mode_s='Single-Layer'
 		else:
-			mode_s = 'Quantum'
+			mode_s = 'Double-Layer'
 		
 		print("\n\n")
 		print(f"Entering main qbp loop in {mode_s} mode")
-		print("-----------------------------------------\n")
+		print("--------------------------------------------\n")
 
 	while err>delta and iter_no < max_iter:
 		
@@ -782,27 +802,37 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 				
 			#
 			# Calculate the outgoing messages using the insideout routine
-			# (either in ket mode or in the usual ket-bra mode)
+			# (either in DL mode or in the SL mode)
 			#
-			if mode=='Q':
-				out_m_list = insideout_ket(T, in_m_list)
+			if mode=='DL':
+				out_m_list = insideout_DL(T, in_m_list)
 			else:
-				out_m_list = insideout(T, in_m_list)
+				out_m_list = insideout_SL(T, in_m_list)
 			
 			#
 			# Normalize the messages and update the main list of messages
 			#
 			for l in range(legs_no):
 
-
-				if mode=='Q':
-					nr = trace(out_m_list[l])
-				else:
-					nr=sum(out_m_list[l])
-					
-				normalize_it = (abs(nr)>norm(T)*1e-15)
-				if normalize_it:
+		
+				if mode=='DL':
+					#
+					# Normalize according to the trace norm
+					#
+					nr = norm(out_m_list[l], ord='nuc')
 					out_m_list[l] = out_m_list[l]/nr
+					tr = trace(out_m_list[l])
+					tr_phase = tr/abs(tr)
+					out_m_list[l] = out_m_list[l]/tr_phase
+				else:
+					#
+					# Normalize in the L_1 norm (as if we're dealing with probs)
+					#
+					nr = norm(out_m_list[l], ord=1)
+					out_m_list[l] = out_m_list[l]/nr
+					tr = sum(out_m_list[l])
+					tr_phase = tr/abs(tr)
+					out_m_list[l] = out_m_list[l]/tr_phase
 								
 				#
 				# Find the vertex j to which the message goes, and 
@@ -815,24 +845,25 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 				j = (i1 if i1 !=i else j1)
 
 				#
-				# Calculate the L_1 normalized error (suitable both in ket and
-				# ketbra modes)
+				# Calculate the L_1 normalized error (both in DL and SL modes)
 				#
-				if normalize_it:
-					err += 2*norm(m_list[i][j] - out_m_list[l], ord=1) \
-						/(norm(out_m_list[l], ord=1) + norm(m_list[i][j], ord=1))
-					err_n += 1
-				
-				message = (1-damping)*out_m_list[l] + damping*m_list[i][j]
-								
-				m_list[i][j] = message
+				if mode=='DL':
+					err += norm(m_list[i][j] - out_m_list[l], ord='nuc') 
+				else:
+					err += norm(m_list[i][j] - out_m_list[l], ord=1) 
+					
+				err_n += 1
+					
+				m_list[i][j] = (1-damping)*out_m_list[l] + damping*m_list[i][j]
+
 		
 		# 
 		# The error is the average L_1 distance divided by the total number
 		# of coordinates if we stack all messages as one huge vector
 		#
 		
-		err = err/err_n
+		if err_n>0:
+			err = err/err_n
 		
 		if log:
 			print(f"qbp iter {iter_no}: BP-err = {err:.6g}")
