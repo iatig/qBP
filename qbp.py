@@ -87,7 +87,10 @@
 #                       uses the matrix L_1 norm).
 #
 #
-#
+# 17-Aug-2025: MAJOR change in qbp: changed the permute_order flat to 
+#              the vorder parameter, which can now also be used to 
+#              specify an arbitrary order of vertices. In addition, 
+#              replaced all log/Log flags with elog.
 #
 #
 
@@ -97,11 +100,6 @@ import numpy as np
 from numpy.linalg import norm
 from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 	eye, log, pi
-
-
-
-
-
 
 
 #
@@ -179,7 +177,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	
 	"""
 
-	Log = False
+	elog = False
 	
 	EPS    = 1e-15
 	BIGLOG = 50
@@ -199,7 +197,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		#
 		mode = 'Q'
 	
-	if Log:
+	if elog:
 		print(f"Entering get_Bethe_free_energy in {mode} mode")
 		
 	n = len(T_list)
@@ -247,7 +245,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		if nr<EPS*max(norm(m_list[i][j]), norm(m_list[j][i]),1e-20):
 			F_bethe += -BIGLOG
 			
-			if Log:
+			if elog:
 				print("Warnning: small message overlap in get_Bethe_free_energy!")
 				print(f"message-overlap: {msg_overlap:.6g}")
 				print(f"msg({i}->{j}) norm: {norm(m_list[i][j]):.6g}      " \
@@ -293,7 +291,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			if abs(M)<EPS*norm(T_list[i]):
 				F_bethe += BIGLOG
 
-				if Log:
+				if elog:
 					print("Warnning: small local contribution in get_Bethe_free_energy!")
 					print(f"Local contrib at vertex {i}: {M:.6g}    "\
 						f"norm(T[{i}]) = {norm(T_list[i]):.6g}")
@@ -348,6 +346,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		F_bethe = F_bethe.real + 1j*F_bethe_i
 		
 	return F_bethe
+
 
 
 
@@ -560,7 +559,7 @@ def insideout_SL(T, in_m_list, direction='A'):
 #
 
 def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
-	delta=1e-6, damping=0.2, permute_order=False):
+	delta=1e-6, damping=0.2, vorder='sequential'):
 
 	"""
 	
@@ -623,9 +622,17 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 									(1-damping)*new_m + damping*old_m
 									
 									
-	permute_order --- If True, then the messages at each round are 
-	                  updated in a random permutation of the vertices. 
-	                  Otherwise, it is done sequentially.
+	vorder ---      The order of the vertices in which BP is run; on each
+	                round the algorithm go over all vertices according to
+	                that order, and runs the insideout function. Takes all
+	                the incoming messages to that vertex and calculate 
+	                the outgoing.
+	                
+	                There are 3 possibilities:
+	                'sequential' --- go over v=0,1,2,3,...
+	                'random'     --- picks a random order
+	                actual list  --- in  this case the list contains the
+	                                 order of the verices.
 	                  
 	
 	Output:
@@ -642,7 +649,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	
 	"""
 
-	log = False
+	elog = False
 	
 	#
 	# First check if we are classical (ketbra) or quantum (ket).
@@ -747,7 +754,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	err = 1.0
 	iter_no = 0
 	
-	if log:
+	if elog:
 		
 		if mode=='SL':
 			mode_s='Single-Layer'
@@ -773,14 +780,19 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		#
 		
 		#
-		# If permute_order = True, then the order in which we calculate
-		# the messages is random (we go over a random ordering of the 
-		# vertices)
+		# Determine the order of the vertices in which the insideout is 
+		# called. 
 		#
-		if permute_order:
-			vertices_order = np.random.permutation(n)
+		if type(vorder)==str:
+			if vorder=='sequential':
+				vertices_order = range(n)
+			elif vorder=='random':
+				vertices_order = np.random.permutation(n)
+			else:
+				print(f"qbp error: illegal vorder (given vorder='{vorder}')")
+				exit(1)
 		else:
-			vertices_order = range(n)
+			vertices_order = vorder
 			
 		for i in vertices_order:
 				
@@ -865,7 +877,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		if err_n>0:
 			err = err/err_n
 		
-		if log:
+		if elog:
 			print(f"qbp iter {iter_no}: BP-err = {err:.6g}")
 		
 	
