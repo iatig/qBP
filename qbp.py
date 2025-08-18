@@ -93,6 +93,12 @@
 #              replaced all log/Log flags with elog.
 #
 #
+# 18-Aug-2025: Added the cluster_qbp function, together with the
+#              cluser_Bethe_free_energy. Currently, the cluster_qbp
+#              only works in Single-Layer mode (SL) and supports only
+#              'star' and 'loop' clusters.
+#
+#
 
 
 import numpy as np
@@ -348,6 +354,972 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	return F_bethe
 
 
+
+
+
+
+
+
+
+
+
+
+#
+# --------------------  cluster_Bethe_free_energy  ---------------------
+#	
+def cluster_Bethe_free_energy(m_list, T_list, e_list, e_dict, c_list):
+	
+	
+
+	#
+	# ------------------   contract_external_legs   ------------------------
+	#
+
+	def contract_external_legs(v0, v1, v2, bridges=[]):
+			
+		r"""
+		
+		Given 3 vertices v0,v1,v2 we focus on the tensor of v1. We contract
+		it with all the incoming messages that are *not* coming from v0 or 
+		v2 or any of the bridges. 
+		
+		The result is either a rank-2 tensor or a rank-3 tensor (if there's
+		a bridge).
+		
+		We then permute the legs according to '02' or '0b2' where:
+		0 --- leg connecting to v0
+		b --- leg connecting to the bridge (if any)
+		2 --- leg connecting to v2
+		
+		Input Parameters:
+		-----------------
+		v0,v1,v2       --- The indices of the vertices in the cluster, 
+											 where v1 is the index of the tensor we contract
+											 
+		bridges        --- An optional list of internal edges
+		
+		
+		Output:
+		-------
+		Either a degree 2 or 3 tensor M:
+		degree 2: T_{i0,i2}
+		degree 3: T_{i0,b,i2}
+		
+		
+		"""
+		
+		M = T_list[v1]
+		
+		order = ''
+		for e in e_list[v1]:
+			
+			if e in bridges:
+				order = order + 'b'
+				action = 'cycle'
+			
+			else:
+			
+				vi,i_leg, vj,j_leg = e_dict[e]
+				
+				if vi!=v1:
+					vj=vi
+					
+				#
+				# Now vj is the neighboring vertex
+				#
+				
+				if vj in [v0,v2]:
+					#
+					# So vj is one of the legs in the loop
+					#
+					if vj==v0:
+						order = order + '0'
+					else:
+						order = order + '2'
+					
+					action = 'cycle'
+				else:
+					action = 'contract'
+
+			if action == 'cycle':
+				#
+				# Create a permutation that cycles the 1st leg to be last
+				#
+				k = len(M.shape) # how many legs
+				sh = list(range(1,k))
+				sh.append(0)
+
+				M = M.transpose(sh)
+				
+			if action == 'contract':
+				#
+				# Its an external leg - so contract with the incoming message
+				#
+
+				M = tensordot(M, nm_list[vj][v1],axes=([0],[0]))
+		
+		#
+		# At this point the legs of resultant tensor can be of the orders
+		# '02', '20', '02b', 'b02', ...
+		#
+		# We want to bring it to either '02' or '0b2'
+		#
+		if len(order)==2:
+			if order == '20':
+				M = M.transpose()
+		else:
+			sh = [order.index('0'), order.index('b'), order.index('2')]
+			M = M.transpose(sh)
+			
+		return M
+
+	
+
+	
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~  cluster_star
+	# 
+	
+	def cluster_star(i):
+		
+		M = T_list[i]
+
+		for e in e_list[i]:
+				vi,i_leg, vj,j_leg = e_dict[e]
+				
+				if vi==i:
+					j=vj
+				else:
+					j=vi
+					
+				M = tensordot(M, nm_list[j][i],axes=([0],[0]))
+				
+		
+		return log(M.astype(np.complex128))
+			
+	
+
+
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~  cluster_loop
+	# 
+	
+	def cluster_loop(v_list):
+		
+		l=len(v_list)
+		
+		for i in range(l):
+			v0 = v_list[(i-1)%l]
+			v1 = v_list[i]
+			v2 = v_list[(i+1)%l]
+			
+			M = contract_external_legs(v0,v1,v2)
+			
+			if i==0:
+				loop_O = M
+			else:
+				loop_O = loop_O@M
+				
+		tr = trace(loop_O)
+			
+		return log(tr.astype(np.complex128))
+			
+
+
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~  cluster_ladder
+	# 
+	
+	def cluster_ladder(v_list, bridges):
+		
+		l = len(v_list)
+		
+		i_R, i_L, M = -1, l, None
+
+		#
+		# We start by contracting the right branch
+		#
+		mode = 'R'
+		
+		while i_R+1 < i_L:
+			
+			if mode=='R':
+				
+				#
+				# Update i_R and find the contracted tensor there
+				#
+				i_R += 1
+				
+				v0 = v_list[(i_R-1)%l]
+				v1 = v_list[i_R]
+				v2 = v_list[(i_R+1)%l]
+				
+				T_R = contract_external_legs(v0,v1,v2, bridges)
+				
+				#
+				# Now contract it
+				#
+				if M is None:
+					M = T_R
+				elif len(T_R.shape)==2:
+					M = M@T_R
+				else:
+					#
+					# we've encountered a bridge. So switch to contracting the 
+					# left branch until we meet the other side of the bridge
+					#
+					mode = 'L'
+					
+			if mode=='L':
+				
+				#
+				# Start by updating the left index and getting the contracted
+				# tensor there
+				#
+				i_L -= 1
+				
+				v0 = v_list[(i_L-1)%l]
+				v1 = v_list[i_L]
+				v2 = v_list[(i_L+1)%l]
+				
+				
+				T_L = contract_external_legs(v0,v1,v2, bridges)
+				
+				if len(T_L.shape)==2:
+					M = T_L@M
+				else:
+					#
+					# we've reached a bridge. This means that T_R is also a 
+					# degree-3 tensor. So now we need to contract the bridge
+					# T_R, M, T_L 
+					#
+					# and then switch to the right branch
+					#
+					
+					T_R = tensordot(M, T_R, axes=([1],[0]))
+					M = tensordot(T_L,T_R, axes=([2,1],[0,1]))
+					
+					mode = 'R'
+					
+		tr = trace(M)
+		return log(tr.astype(np.complex128))
+		
+
+	#~~~~~~~~~~~~~~~~~~~~~     Start of function      ~~~~~~~~~~~~~~~~~~~~
+		
+
+	Log = False
+	
+	EPS    = 1e-15
+	BIGLOG = 50
+		
+	n = len(T_list)
+	
+	nm_list = [[None]*n for i in range(n)]
+	
+	#
+	# First, renormalize the messages so that 
+	#
+
+	for e in e_dict.keys():
+		
+		i,i_leg, j,j_leg = e_dict[e]
+		
+		# by construction we have i<j
+
+		msg_overlap = dot(m_list[i][j],m_list[j][i])
+		nm_list[i][j] = m_list[i][j]/msg_overlap
+		nm_list[j][i] = m_list[j][i]
+	
+	
+	F_bethe = 0.0j
+	
+	
+	for ci, c in enumerate(c_list):
+		ctype, v_list, params = c
+		
+		
+		if ctype=='star':
+			v = v_list[0]
+			F_bethe = F_bethe - cluster_star(v)
+			
+		if ctype=='loop':
+			F_bethe = F_bethe - cluster_loop(v_list)
+		
+		if ctype=='ladder':
+			F_bethe = F_bethe - cluster_ladder(v_list, params['bridges'])
+	
+	#
+	# Make the imaginary part minimal (rememeber that 2*pi multiples do
+	# not matter because Tr(TN)=exp(-F_bethe) )
+	#
+	# Also, if we are very close the positive real axis, then probably
+	# we're on a classical settings, and so just ignore the imaginary
+	# part of the Bethe energy, and output a real number.
+	#
+
+	F_bethe_i = F_bethe.imag % (2*pi)
+	
+	if min(abs(F_bethe_i), abs(F_bethe_i-2*pi)) < EPS*abs(F_bethe):
+		F_bethe = F_bethe.real
+	else:
+		F_bethe = F_bethe.real + 1j*F_bethe_i
+	
+	
+		
+	return F_bethe
+		
+	
+
+#
+# --------------------------- cluser_qbp --------------------------------
+#
+
+def cluster_qbp(T_list, e_list, e_dict, c_list, \
+	initial_m='U', max_iter=10000, delta=1e-6, damping=0.2, \
+	corder='sequential'):
+
+	"""
+	
+	Runs a BP (belief Propagation) on a (closed) tensor network and 
+	where the messages between vertices are calculated using clusters.
+	
+	Currently a cluster can be a single vertex, or a simple loop. 
+	
+	Given a cluster and a set of incoming messages to its vertices, the 
+	every outgoing message  i->j of a vertex i in the cluster and an 
+	external vertex j is calculated by:
+	
+	(a) Contract all incoming messages from external vertices to the 
+	    cluster, apart from the vertex j
+	    
+	(b) Exactly contract all the remaining TN of the cluster.
+	
+
+	Currently, the function on works in single-layer (SL) mode.
+	
+	Except for this difference, the functions behaves like the ordinary
+	BP (see qbp). We run a number of iterations. In each iteration we go 
+	over the clusters in a certain order, and for each cluster we run the
+	corresponding insideout function, which takes the incoming messages 
+	of the cluster and calculates its outgoing messages.
+	
+	The iterations stop once we hit the upperbound (max_iter), or the
+	messages of two previous generations are close enough to each other.
+	
+	
+	Parameters:
+	-----------
+	
+	T_list --- The list of tensors that make up the TN (like in ncon)
+	
+	e_list ---	The labels of the edges (legs) of each tensor. This
+									is a list of lists. For each tensor T with k legs
+									there is a list [e_0, e_1, ..., e_{k-1}] of the labels
+									of the legs. The same label must appear in the other
+									tensor with which the leg is contracted.
+	               
+									Each label must be a positive integer.
+									
+	e_dict   --- A complementary structure to e_list. It is a dictionary
+	             where the keys are the edges labels, and the value
+	             is a 4-taple (i,i_leg, j, j_leg) with i<j.
+	             
+	             It is completely derivable from e_list. If omitted, 
+	             it is calculated at the begining of the function.
+	             
+	c_list   --- The list of clusters. Each cluster is a tuple
+	             (ctype, vs, params), where:
+	             
+	               (-) ctype is a string:
+	                   => 'star' --- a single vertex
+	                   => 'loop' --- a simple loop
+	             
+	               (-) vs --- list of vertices that make up the cluster
+	             
+	               (-) params --- an optional dictionary of parameters
+									
+	               
+	initial_m   --- An optional list of initial messages. It can also be 
+	                a string 'U' meaning unifrom initialization (1/D 
+	                vector in the classical case or Id/D matrix in the 
+	                quantum case), or it can be 'R', in which case we use
+	                random normalized vector vector in the classical case
+	                and a random PSD with Tr=1 in the quantum case).
+	
+									
+	max_iter ---		A upper bound for the maxmial number of iterations
+	
+	delta			---			The distance between two consequtive sets of messages
+									after which the iteration stops (the messages are 
+									considered converged)
+									
+	damping --- 		A possible damping parameter to facilitate convergence.
+									The new message is obtained by:
+									
+									(1-damping)*new_m + damping*old_m
+									
+									
+	corder ---      The order of the clusters in which BP is run; on each
+	                round the algorithm go over all clusters according to
+	                that order.
+	                
+	                There are 3 possibilities:
+	                'sequential' --- go over v=0,1,2,3,...
+	                'random'     --- picks a random order
+	                actual list  --- in  this case the list contains the
+	                                 order of the clusters.
+	                  
+	
+	Output:
+	-------
+	
+	The list of converged messages. This is a double list m_list[i][j]
+	which holds the i->j message.
+
+	
+	
+	"""
+			
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~  clegs
+	# 
+	
+	def clegs(v0,v1,v2):
+		
+		r"""
+		
+		Given a sequence of vertices on the loop v0 -> v1 -> v2, the function
+		calculates the relevant tensors for v1. These include:
+		
+		1. The transfer matrix T_{k0,k2} which is the contraction of all the
+		   legs of v1 except for those of v0, v2
+		   
+		2. External tensors M_{k0, k2, k}, where k is a remaining external
+		   leg (and all the other external legs are contracted).
+		   
+		the output is T and a list [(j0, M0), (j1, M1), ...]
+		
+		where j_i is the external vertex to which the external leg of Mi 
+		belongs.
+		
+		
+		"""
+		
+		M = T_list[v1]
+
+		#
+		# We first create a list of all incoming messages to v1, and 
+		# note which one of them belongs to v0, v2, and which are external
+		#
+		
+		in_msg_list = []
+		for k,e in enumerate(e_list[v1]):
+			
+			vi,i_leg, vj,j_leg = e_dict[e]
+			
+			if vi!=v1:
+				vj=vi
+				
+			#
+			# Now vj is the neighboring vertex
+			#
+			
+			if vj==v0:
+				v0_loc = k
+			elif vj==v2:
+				v2_loc = k
+			else:
+				#
+				# Its an external, so add its incoming message to the list
+				#
+				
+				in_msg_list.append((k,vj,m_list[vj][v1]))
+
+		#
+		# Now contract the external legs to their incoming messages, 
+		# forming the M_i 3-leg tensors.
+		#
+		# At this point we only support the cases where the number of 
+		# external legs is 0, 1, 2
+		#
+		
+		ext_n=len(in_msg_list)
+		
+		if ext_n==0:
+			#
+			# No external legs
+			#
+			if v2_loc<v0_loc:
+				#
+				# Make sure that the legs order in M is (k0, k2)
+				#
+				M = M.transpose()
+			
+			return M, []
+			
+		if ext_n==1:
+			#
+			# One external leg
+			#
+			
+			k,j,m = in_msg_list[0]
+			
+			#
+			# Move the external leg to the end and make sure that the k0,k2
+			# legs are ordered properly
+			#
+
+			perm = (v0_loc,v2_loc,k)
+			M = M.transpose(perm)
+			
+			T = tensordot(M, m, axes=([2],[0]))
+			
+			return T, [(j,M)]
+			
+		if ext_n==2:
+			#
+			# Two external legs.
+			#
+			
+			k0,j0,m0 = in_msg_list[0]
+			k1,j1,m1 = in_msg_list[1]
+			
+			
+			#
+			# Move the external legs to the end
+			#
+			
+			perm = (v0_loc,v2_loc,k0,k1)
+			M = M.transpose(perm)
+			
+			#
+			# Now M legs are: [v0,v2,k0,k1]
+			#
+			
+			M0 = tensordot(M, m1, axes=([3],[0]))
+			M1 = tensordot(M, m0, axes=([2],[0]))
+			T  = tensordot(M0, m0, axes=([2],[0]))
+			
+			return T, [(j0,M0),(j1,M1)]
+			
+
+
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~  insideout_loop_SL
+	# 
+	
+	def insideout_loop_SL(vs):
+		
+		r"""
+		
+		Given a loop described by the vertices vs=[v0, v1, ...], calculate
+		its outgoing messages m0, m1, ... by contracting the loop together 
+		with its incoming messages.
+		
+		The algorithm uses a first pass where it calculates the contraction
+		of the "transfer-matrix" from the left, and then does another
+		pass from the right. This enables it to calculate the loop env
+		at every point, from which the outer message is calculated. 
+		
+		A sketch of the bookkeeping is found in insideout_loop_SL-bookkeping.pdf
+		
+		Input Parameters:
+		------------------
+		
+		vs --- The list of vertices that make up the loop
+		
+		Output:
+		-------
+		out_m_list --- a list [(i,j,m), ...] where m is the outgoing
+		               i-->j message (i is part of the loop)
+		               
+		               The order of the messages is according to the order
+		               of the vertices in vs, and the order of the external
+		               legs in each v in vs.
+		
+		
+		"""
+		
+		elog = False
+
+		if elog:
+			print(f"Entering insideout_loop_SL with vs={vs}:")
+
+		l = len(vs)
+		
+		#
+		# Create the list of contracted tensors along the loop. 
+		# The contraction is for all the external messages, so that
+		# each contracted tensor contains only 2 remaining indices.
+		#
+		contT_list = []
+		for i in range(l):
+			v0 = vs[(i-1) % l]
+			v1 = vs[i]
+			v2 = vs[(i+1) % l]
+			
+			T, partials = clegs(v0, v1, v2)
+					
+			contT_list.append((T, partials))
+			
+				
+		
+		#
+		# Dimension of the leg connecting T_{l-1} --- T_0
+		#
+		
+		T,partials = contT_list[0]
+		d0=T.shape[0]
+		
+		#
+		# Create the list of all left contractions
+		#
+		# (L_k)_{al_k, al_0} = (T_k)_{al_k,al_k+1} ... T_{l-1}_{al_{l-1},al_0}
+		#
+		ML = eye(d0)
+		Lmat_list = [None]*(l+1)
+		Lmat_list[l] = ML
+		for i in range(l-1,-1,-1):
+			T,partials = contT_list[i]
+			ML = T@ML
+			ML = ML/norm(ML)
+			Lmat_list[i] = ML
+			
+		#
+		# Now go over v0 -> v_{l-1} and contract from the right, and 
+		# use the left contraction to get the loop env and then the
+		# outgoing message
+		#
+		
+		if elog:
+			print("\n\n")
+			print("Entering insideout_loop_SL main Loop:")
+		
+		out_m_list = []
+		
+		MR = eye(d0)
+		
+		for i in range(l):
+			if elog:
+				print(f"Calculating out-messages of {vs[i]}")
+			
+			#
+			# MR = (R_k)_{al_0,al_k} = (T_0)_{al_0,al_1}...(T_{k-1})_{al_k-1,al_k}
+			#
+			# Therefore R_0 = Id, R_1 = T_0, ...
+			#           
+			#
+			
+			#
+			# (env_k)_{al_{k+1},al_k} = L_{k+1} R_k
+			#
+			env = Lmat_list[i+1]@MR
+			
+			# Define R_{k+1}
+			
+			T,partials = contT_list[i]
+			MR = MR@T
+			MR = MR/norm(MR)
+			
+			# 
+			# Now we go over the partials and contract the 3-legs tensors
+			# there with the env tensor to create the outgoing messages
+			# from that vertex
+			#
+			
+			for (j,M) in partials:
+				
+				#
+				# M has legs:   (v0, v2, out-leg) 
+				# env has legs: (v2, v0) 
+				#
+				
+				m = tensordot(env, M, axes=([0,1],[1,0]))
+				
+				v1 = vs[i]
+				out_m_list.append( (v1,j,m) )
+
+		if elog:
+			print("\n")
+			print(f"insideout_loop_SL Final out messages: ")
+			for k,(i,j,m) in enumerate(out_m_list):
+				print(f"m[{k}]: {i} --> {j}  d={m.shape}")
+			
+		return out_m_list
+				
+		
+ #   <<<<<<<<<<<<<<   Begining of cluster_qbp function   >>>>>>>>>>>>>>
+
+	elog = False
+	
+	#
+	# First check if we are in a single-layer (SL) or double-layer (DL) 
+	# mode. In the DL mode, the tensors have a physical leg, and the actual
+	# BP message is calculated by contracting T and T^* along that 
+	# physical leg. 
+	#
+	# NOTE: currently, only SL mode is supported.
+	#
+	
+	if len(T_list[0].shape)==len(e_list[0]):
+		mode='SL'  # Single-Layer mode
+	else:
+		mode='DL'  # Double-Layer mode (there's an extra phyiscal leg)
+		
+	if mode=='DL':
+		print("cluster_qbp error: currently double layer (DL) mode is not "\
+			"supported")
+		exit(1)
+		
+
+	n = len(T_list)    # no. of tensors
+	nc = len(c_list)   # no. of clusters
+
+	#
+	# If initial_m is given as a list of messages --- it is the list
+	# of initial messages to use. Otherwise, it is a string 'R' or 'U', 
+	# telling us what kind of initial messages to create.
+	#
+
+	if type(initial_m) is list:
+		m_list = initial_m
+	else:
+
+		#
+		# In such case we should create the initial messages. We first
+		# initialize a 2D list of size n\times n which holds the i->j
+		# message
+		#
+		
+		m_list = [ [None]*n for i in range(n)]  
+				
+		#
+		# Go over all tensors, and for each tensor i go over its legs, and 
+		# find its neighbors j
+		#
+		for i in range(n):
+			
+			no_legs = len(e_list[i])
+			
+			for leg in range(no_legs):
+					
+				e = e_list[i][leg]
+				
+				i1,i1_leg, j1,j1_leg=e_dict[e]
+				
+				
+				j = (i1 if i1 !=i else j1)
+						
+				#
+				# Now assign a normalized random message. When in a ket mode, 
+				# the message is a PSD [D,D] matrix. Otherwise it is a positive 
+				# D vector.
+				#
+				
+				if mode=='DL':
+					#
+					# We are on double-layer mode --- our messages are PSD matrices
+					#
+					D = T_list[i].shape[leg+1]
+					
+					if initial_m=='R':
+						#
+						# Use random PSD
+						#
+						ms = np.random.normal(size=[D,D])
+						message = ms@ms.T
+						message = message/trace(message)
+					else:
+						message = eye(D)/D
+						
+				else:
+					#
+					# We are on Single-Layer mode --- our messages are vectors
+					#
+					
+					D = T_list[i].shape[leg]
+					
+					if initial_m =='R':
+						message = np.random.uniform(size=[D])
+					else:
+						message = ones(D)
+						
+					message = message/sum(message)
+					
+				m_list[i][j] = message
+				
+	
+	#
+	# ===================== Main Iteration Loop =========================
+	#
+	
+	err = 1.0
+	iter_no = 0
+	
+	if elog:
+		
+		if mode=='SL':
+			mode_s='Single-Layer'
+		else:
+			mode_s = 'Double-Layer'
+		
+		print("\n\n")
+		print(f"Entering main cluster-qbp loop in {mode_s} mode")
+		print("-----------------------------------------------------\n")
+		
+		print("\n\n")
+		print("Clusters: ", c_list)
+		print()
+
+
+	
+	while err>delta and iter_no < max_iter:
+		
+		iter_no += 1
+
+		err = 0.0
+		err_n = 0
+		
+		if elog:
+			print(f"----------   Entering cluster_qbp round {iter_no}   -----------")
+		
+		
+		#
+		# Determine the order of the clusters in which the insideout is 
+		# called. 
+		#
+		if type(corder)==str:
+			if corder=='sequential':
+				clusters_order = range(nc)
+			elif corder=='random':
+				clusters_order = np.random.permutation(nc)
+			else:
+				print(f"cluster_qbp error: illegal corder (given corder='{corder}')")
+				exit(1)
+		else:
+			clusters_order = corder
+
+		#
+		# ---------------------------------------------------------------
+		#                           Main Loop:
+		#
+		# Go over all clusters c in clusters_order and for each cluster 
+		# calculate its outgoing messages based on its incoming ones.
+		#
+		# ---------------------------------------------------------------
+		#
+		
+		for c in clusters_order:
+
+			ctype, vs, params = c_list[c]
+
+			if elog:
+				print(f"Iteration {iter_no}: Entering cluster {ctype} with vs={vs}")
+
+
+			
+			#
+			# Now see what type of a cluster we have. For each type, we run
+			# the appropriate insideout function
+			#
+			
+			if ctype=='star':
+				# 
+				# Create a list of incoming messages, send it to insideout_SL
+				# and get a list of outgoing messages
+				#
+				i = vs[0]
+				legs_no = len(e_list[i])
+				T = T_list[i]
+				
+				in_m_list = []
+				out_m_list = []
+
+				for l in range(legs_no):
+					e = e_list[i][l]
+					
+					i1,i1_leg, j1, j1_leg = e_dict[e]
+					
+					j = (i1 if i1 !=i else j1)
+					in_m_list.append(m_list[j][i])
+				
+				out_m1 = insideout_SL(T, in_m_list)
+				out_m_list = []
+				for l in range(legs_no):
+					e = e_list[i][l]
+					
+					i1,i1_leg, j1, j1_leg = e_dict[e]
+					
+					j = (i1 if i1 !=i else j1)
+					out_m_list.append( (i,j, out_m1[l]) )
+					
+			elif ctype=='loop':
+				out_m_list = insideout_loop_SL(vs)
+
+			
+			#
+			# At this point we have the list of outgoing messages from the 
+			# cluster. Every item in the list is a tuple (i,j,m)
+			# indicating the message m between i-->j
+			#
+			
+			#
+			# Normalize the messages and update the main list of messages
+			#
+			for i,j,out_m in out_m_list:
+
+		
+				if mode=='DL':
+					#
+					# Normalize according to the trace norm
+					#
+					
+					print("!!! TODO: DL mode not yet implemented in cluster_qbp!")
+					exit(0)
+					
+				else:
+					#
+					# Normalize in the L_1 norm (as if we're dealing with probs)
+					#
+					nr = norm(out_m, ord=1)
+					out_m = out_m/nr
+					tr = sum(out_m)
+					tr_phase = tr/abs(tr)
+					out_m = out_m/tr_phase
+								
+
+				#
+				# Calculate the L_1 normalized error (both in DL and SL modes)
+				#
+				if mode=='DL':
+					print("!!! TODO: DL mode not yet implemented in cluster_qbp!")
+					exit(0)
+				else:
+					err += norm(m_list[i][j] - out_m, ord=1) 
+					
+				err_n += 1
+					
+				m_list[i][j] = (1-damping)*out_m + damping*m_list[i][j]
+
+		
+		# 
+		# The error is the average L_1 distance divided by the total number
+		# of coordinates if we stack all messages as one huge vector
+		#
+		
+		if err_n>0:
+			err = err/err_n
+		
+		if elog:
+			print()
+			print(f"cluster qbp iteration {iter_no}: BP-err = {err:.6g}\n")
+		
+	
+
+	return m_list, err, iter_no
+	
+	
 
 
 #
@@ -641,8 +1613,8 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	The list of converged messages. This is a double list m_list[i][j]
 	which holds the i->j message.
 	
-	In the quantum case, the each message is a matrix [D,D]. Otherwise, 
-	It is a vector [D]
+	In the double layer (DL) case, the each message is a matrix [D,D]. 
+	Otherwise, it is a vector [D]
 
 	
 	
