@@ -98,6 +98,14 @@
 #              only works in Single-Layer mode (SL) and supports only
 #              'star' and 'loop' clusters.
 #
+# 18-Sep-2025: Add function adj_vert. Also added functionality to 
+#              treat wcopy and xor tensors, which can be used as 
+#              clusters in cluster_qbp for QEC decoding. This includes
+#              adding this functionality to cluster_qbp, via the new  
+#              functions insideout_xor, insideout_wcopy, and also the 
+#              appropriate subfunctions in cluster_Bethe_free_energy. 
+#              Also remove degenerate DL functionality from cluster_qbp.
+#
 #
 
 
@@ -106,6 +114,10 @@ import numpy as np
 from numpy.linalg import norm
 from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 	eye, log, pi
+
+
+nscHgate = array([[1,1],[1,-1]])  # *Unscaled* Hadamard gate
+
 
 
 #
@@ -152,6 +164,24 @@ def calc_e_dict(e_list):
 				e_dict[e] = (j, leg_j)
 
 	return e_dict
+
+
+#
+# ------------------------   adj_vert   -------------------------
+#
+def adj_vert(v, e, e_dict):
+	"""
+	
+	Returns the vertex that is adjacent to vertex v along edge e
+	
+	"""
+	
+	i,i_leg, j, j_leg = e_dict[e]
+	
+	if i==v:
+		return j
+	else:
+		return i
 
 
 
@@ -372,9 +402,8 @@ def cluster_Bethe_free_energy(m_list, T_list, e_list, e_dict, c_list):
 	
 
 	#
-	# ------------------   contract_external_legs   ------------------------
+	# ~~~~~~~~~~~~~~~~~~~~   contract_external_legs 
 	#
-
 	def contract_external_legs(v0, v1, v2, bridges=[]):
 			
 		r"""
@@ -474,24 +503,52 @@ def cluster_Bethe_free_energy(m_list, T_list, e_list, e_dict, c_list):
 		return M
 
 	
+	
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~  cluster_wcopy
+	#
+	def cluster_wcopy(in_m_list, p=None):
+		
+		k = len(in_m_list)
+			
+		if p is None:
+			m0, m1 = 1.0, 1.0
+		else:
+			m0, m1 = 1-p, p
+		
+		for i in range(k):
+			m0 *= in_m_list[i][0]
+			m1 *= in_m_list[i][1]
+		
+		tr = m0+m1
+		
+		return log(tr.astype(np.complex128))
+			
+		
+	#
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~ cluster_xor
+	#
+	def cluster_xor(in_m_list, parity=0):
+		
+		Hm_list = [nscHgate@m for m in in_m_list]
+
+		if parity==1:
+			v = array([0,1])
+			Hm_list.append(nscHgate@v)
+		
+			
+		return cluster_wcopy(Hm_list) - log(2)
 
 	
 	#
 	# ~~~~~~~~~~~~~~~~~~~~~~~~  cluster_star
 	# 
-	
 	def cluster_star(i):
 		
 		M = T_list[i]
 
 		for e in e_list[i]:
-				vi,i_leg, vj,j_leg = e_dict[e]
-				
-				if vi==i:
-					j=vj
-				else:
-					j=vi
-					
+				j = adj_vert(i, e, e_dict)
 				M = tensordot(M, nm_list[j][i],axes=([0],[0]))
 				
 		
@@ -503,7 +560,6 @@ def cluster_Bethe_free_energy(m_list, T_list, e_list, e_dict, c_list):
 	#
 	# ~~~~~~~~~~~~~~~~~~~~~~~~  cluster_loop
 	# 
-	
 	def cluster_loop(v_list):
 		
 		l=len(v_list)
@@ -648,6 +704,20 @@ def cluster_Bethe_free_energy(m_list, T_list, e_list, e_dict, c_list):
 		
 		if ctype=='ladder':
 			F_bethe = F_bethe - cluster_ladder(v_list, params['bridges'])
+			
+			
+		if ctype=='xor' or ctype=='wcopy':
+			v = v_list[0]
+
+			in_m_list = []
+			for e in e_list[v]:
+				vj = adj_vert(v,e, e_dict)
+				in_m_list.append(nm_list[vj][v])
+				
+			if ctype=='xor':
+				F_bethe = F_bethe - cluster_xor(in_m_list, params)
+			else:
+				F_bethe = F_bethe - cluster_wcopy(in_m_list, params)
 	
 	#
 	# Make the imaginary part minimal (rememeber that 2*pi multiples do
@@ -1049,7 +1119,7 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 		return out_m_list
 				
 		
- #   <<<<<<<<<<<<<<   Begining of cluster_qbp function   >>>>>>>>>>>>>>
+ # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 	elog = False
 	
@@ -1062,10 +1132,7 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 	# NOTE: currently, only SL mode is supported.
 	#
 	
-	if len(T_list[0].shape)==len(e_list[0]):
-		mode='SL'  # Single-Layer mode
-	else:
-		mode='DL'  # Double-Layer mode (there's an extra phyiscal leg)
+	mode='SL'  # Single-Layer mode
 		
 	if mode=='DL':
 		print("cluster_qbp error: currently double layer (DL) mode is not "\
@@ -1102,14 +1169,11 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 			
 			no_legs = len(e_list[i])
 			
+			
 			for leg in range(no_legs):
-					
+				
 				e = e_list[i][leg]
-				
-				i1,i1_leg, j1,j1_leg=e_dict[e]
-				
-				
-				j = (i1 if i1 !=i else j1)
+				j = adj_vert(i, e, e_dict)
 						
 				#
 				# Now assign a normalized random message. When in a ket mode, 
@@ -1117,35 +1181,21 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 				# D vector.
 				#
 				
-				if mode=='DL':
-					#
-					# We are on double-layer mode --- our messages are PSD matrices
-					#
-					D = T_list[i].shape[leg+1]
-					
-					if initial_m=='R':
-						#
-						# Use random PSD
-						#
-						ms = np.random.normal(size=[D,D])
-						message = ms@ms.T
-						message = message/trace(message)
-					else:
-						message = eye(D)/D
-						
-				else:
-					#
-					# We are on Single-Layer mode --- our messages are vectors
-					#
-					
+				#
+				# We are on Single-Layer mode --- our messages are vectors
+				#
+				
+				if type(T_list[i]) is np.ndarray:
 					D = T_list[i].shape[leg]
+				else:
+					D = 2
+				
+				if initial_m =='R':
+					message = np.random.uniform(size=[D])
+				else:
+					message = ones(D)
 					
-					if initial_m =='R':
-						message = np.random.uniform(size=[D])
-					else:
-						message = ones(D)
-						
-					message = message/sum(message)
+				message = message/sum(message)
 					
 				m_list[i][j] = message
 				
@@ -1168,9 +1218,6 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 		print(f"Entering main cluster-qbp loop in {mode_s} mode")
 		print("-----------------------------------------------------\n")
 		
-		print("\n\n")
-		print("Clusters: ", c_list)
-		print()
 
 
 	
@@ -1224,27 +1271,35 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 			# the appropriate insideout function
 			#
 			
-			if ctype=='star':
+			if ctype in ['star', 'wcopy', 'xor']:
 				# 
 				# Create a list of incoming messages, send it to insideout_SL
 				# and get a list of outgoing messages
 				#
 				i = vs[0]
 				legs_no = len(e_list[i])
-				T = T_list[i]
+				
 				
 				in_m_list = []
 				out_m_list = []
-
+				
 				for l in range(legs_no):
 					e = e_list[i][l]
 					
-					i1,i1_leg, j1, j1_leg = e_dict[e]
-					
-					j = (i1 if i1 !=i else j1)
+					j = adj_vert(i, e, e_dict)
 					in_m_list.append(m_list[j][i])
+
+				if ctype=='star':
+					T = T_list[i]
+					out_m1 = insideout_SL(T, in_m_list)
+					
+				elif ctype=='wcopy':
+					out_m1 = insideout_wcopy(in_m_list, params)
+					
+				elif ctype=='xor':
+					out_m1 = insideout_xor(in_m_list, params)
 				
-				out_m1 = insideout_SL(T, in_m_list)
+				
 				out_m_list = []
 				for l in range(legs_no):
 					e = e_list[i][l]
@@ -1254,6 +1309,7 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 					j = (i1 if i1 !=i else j1)
 					out_m_list.append( (i,j, out_m1[l]) )
 					
+
 			elif ctype=='loop':
 				out_m_list = insideout_loop_SL(vs)
 
@@ -1320,6 +1376,198 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 	return m_list, err, iter_no
 	
 	
+
+
+
+#
+# ----------------------   insideout_wcopy   ---------------------------
+#
+def insideout_wcopy(in_m_list, p=None):
+	"""
+	
+	Provides the insideout functionality for a wcopy tensor. A wcopy
+	tensor is a weighted copy tensor:
+	
+	              / p0   when   i1=i2=...=ik = 0
+	W_{i1...ik} = 
+	              \ p1   when   i1=i2=...=ik = 1
+	              
+	When the external parameter p is given then p0 = 1-p and p1=p. 
+	When p=None then p0=p1=1, and we get the regular copy tensor.
+	
+	Input Parameters:
+	-----------------
+	
+	in_m_list --- An incoming list of messages. Each message is assumed
+	              to be a dim 2 vector (working with bits)
+	              
+	p         --- The wcopy weight parameter. When given, then p0=1-p, 
+	              and p1=p. Otherwise, p0=p1=None.
+	
+	Output:
+	-------
+	A corresponding list of out BP messages
+	
+	
+	"""
+	
+	ZERO_THRESH = 1e-15
+	
+	k = len(in_m_list)
+	
+	if p is None:
+		m0, m1 = 1.0, 1.0
+	else:
+		m0, m1 = 1-p, p
+	
+	
+	#
+	# We now calculate the products 
+	# m0 := m_1[0]*m_2[0]* ...
+	# m1 := m_1[1]*m_2[1]* ...
+	#
+	# Then the outgoing message at leg i would be [m0/m_i[0], m1/m_i[1]]
+	#
+	# But we need to deal with "division-by-zero" with care. So there are
+	# 3 cases when calculating m0 or m1:
+	#
+	# 1) All m_i[al] != 0, and therefore m{al} != 0
+	# 2) There exactly one m_i[al] = 0. In such case, only the outgoing
+	#    m_i[al] message is non-zero
+	# 3) There are two or more m_i[al] = 0, and in such case all outgoing
+	#    messages are zero for the al coordinate.
+	#
+	# So we first check which one of these options is valid. For al=0,1
+	# we use two variables. For the al=0 we have:
+	# m0zeros --- If there's one zero message in the 0 coordinate, then 
+	#             this is its index.
+	# m0alive --- If there are two or more zeros in the 0 cooridnate, 
+	#             then m0alive=False. 
+	#
+	# The same is done for al=1
+	#
+	
+	
+	m0zeros, m1zeros = None, None
+	m0alive, m1alive = True, True
+	
+	for i in range(k):
+		
+		if m0alive:
+			if abs(in_m_list[i][0])>ZERO_THRESH:
+				m0 *= in_m_list[i][0]
+			else:
+				if m0zeros is None:
+					m0zeros = i
+				else:
+					m0alive = False
+
+		if m1alive:
+			if abs(in_m_list[i][1])>ZERO_THRESH:
+				m1 *= in_m_list[i][1]
+			else:
+				if m1zeros is None:
+					m1zeros = i
+				else:
+					m1alive = False
+	
+	out_m_list = []
+	
+	
+	#
+	# Once we have the products m0, m1, and we know if there is 
+	# are one or more zeros, we can calculate the outgoing messages
+	#
+	for i in range(k):
+		
+		if m0alive:
+			if m0zeros is None:
+				m0i = m0/in_m_list[i][0]
+			else:
+				if m0zeros==i:
+					m0i = m0
+				else:
+					m0i = 0
+		else:
+			m0i = 0
+			
+		if m1alive:
+			if m1zeros is None:
+				m1i = m1/in_m_list[i][1]
+			else:
+				if m1zeros==i:
+					m1i = m1
+				else:
+					m1i = 0
+		else:
+			m1i = 0
+		
+		m = array([m0i, m1i])
+		
+		out_m_list.append(m)
+		
+	return out_m_list
+	
+
+
+#
+# ----------------------   insideout_xor   ---------------------------
+#
+def insideout_xor(in_m_list, parity=0):
+	"""
+	Provides the insideout functionality for the xor tensor. A xor 
+	tensor with parity 0 or 1 is is given by:
+	
+	                   / 1  i1+i2+...+ik = parity mod 2
+	xor[i1, ..., ik] = 
+	                   \ 0  otherwise
+	
+	
+	To calculate it we first add a k+1 leg that carries the parity and
+	ask that the total parity is 0. Then we use the identity that xor is 
+	equal to the 2*copy tensor after we tensor each one of its legs with
+	the non-scaled Hadamarad gate [[1,1], [1,-1]].
+	
+	Therefore, we first create a copy tensor on k+1 legs, and then 
+	multiply the legs by the unscaled Hadamard and finaly divide by 2.
+	
+	Input Parameters:
+	-----------------
+	in_m_list --- An incoming list of messages. Each message is assumed
+	              to be a dim 2 vector (working with bits)
+	              
+	parity    --- The parity of the xor constraint.
+	
+	Output:
+	-------
+	A corresponding list of out BP messages
+	
+	
+	
+	"""
+	
+	
+	k = len(in_m_list)
+	
+	Hm_list = [nscHgate@m for m in in_m_list]
+	
+	#
+	# Add the parity of the xor as an additional message
+	#
+	if parity==0:
+		Hm_list.append(nscHgate@array([1,0]))
+	else:
+		Hm_list.append(nscHgate@array([0,1]))
+		
+	out_list = insideout_wcopy(Hm_list)
+	
+	Hout_list = [nscHgate@m/2 for m in out_list]
+	
+	Hout_list = Hout_list[0:k] # remove the fictional parity message
+	
+	return Hout_list
+	
+
 
 
 #
@@ -1484,6 +1732,7 @@ def insideout_SL(T, in_m_list, direction='A'):
 	The list of outgoing messages.
 	
 	"""
+		
 	
 	legs_no = len(T.shape)
 	
