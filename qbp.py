@@ -107,6 +107,9 @@
 #              Also remove degenerate DL functionality from cluster_qbp.
 #
 #
+# 18-Sep-2025: Added "r" to the comment prefactor at the beginning of 
+#              each function.
+#
 
 
 import numpy as np
@@ -125,7 +128,7 @@ nscHgate = array([[1,1],[1,-1]])  # *Unscaled* Hadamard gate
 #
 
 def calc_e_dict(e_list):
-	"""
+	r"""
 	
 	Given an edge structure in the form of e_list, calculate the edges
 	dictionary. This is a dictionary in which the key is an edge. 
@@ -170,7 +173,7 @@ def calc_e_dict(e_list):
 # ------------------------   adj_vert   -------------------------
 #
 def adj_vert(v, e, e_dict):
-	"""
+	r"""
 	
 	Returns the vertex that is adjacent to vertex v along edge e
 	
@@ -190,7 +193,7 @@ def adj_vert(v, e, e_dict):
 #
 def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	
-	"""
+	r"""
 	
 	Given a TN and a converged set of BP messages, calculate the 
 	Bethe Free Energy F_bethe, which gives the BP approximation of the total
@@ -749,7 +752,7 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 	initial_m='U', max_iter=10000, delta=1e-6, damping=0.2, \
 	corder='sequential'):
 
-	"""
+	r"""
 	
 	Runs a BP (belief Propagation) on a (closed) tensor network and 
 	where the messages between vertices are calculated using clusters.
@@ -1383,7 +1386,7 @@ def cluster_qbp(T_list, e_list, e_dict, c_list, \
 # ----------------------   insideout_wcopy   ---------------------------
 #
 def insideout_wcopy(in_m_list, p=None):
-	"""
+	r"""
 	
 	Provides the insideout functionality for a wcopy tensor. A wcopy
 	tensor is a weighted copy tensor:
@@ -1514,7 +1517,7 @@ def insideout_wcopy(in_m_list, p=None):
 # ----------------------   insideout_xor   ---------------------------
 #
 def insideout_xor(in_m_list, parity=0):
-	"""
+	r"""
 	Provides the insideout functionality for the xor tensor. A xor 
 	tensor with parity 0 or 1 is is given by:
 	
@@ -1576,7 +1579,7 @@ def insideout_xor(in_m_list, parity=0):
 
 def insideout_DL(T, in_m_list):
 	
-	"""
+	r"""
 	
 	A DOUBLE-LAYER inside-out
 	
@@ -1689,7 +1692,7 @@ def insideout_DL(T, in_m_list):
 
 def insideout_SL(T, in_m_list, direction='A'):
 	
-	"""
+	r"""
 	
 	A SINGLE-LAYER inside-out
 	
@@ -1782,7 +1785,7 @@ def insideout_SL(T, in_m_list, direction='A'):
 def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	delta=1e-6, damping=0.2, vorder='sequential'):
 
-	"""
+	r"""
 	
 	Runs a simple BP (belief Propagation) on a (closed) tensor network and 
 	obtains the converged messages. 
