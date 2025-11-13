@@ -115,6 +115,11 @@
 #              then some threshold stored in TR_NORM_EPS. This way
 #              we avoid dividing by zero.
 #
+# 13-Nov-2025: Change in insideout_DL(): instead of keeping two
+#              lists of contracted ket & bra tensors, we now only keep
+#              the ket list and calculate the bra tensor on the fly.
+#              this saves about 50% of memory.
+#
 
 
 import numpy as np
@@ -1615,29 +1620,23 @@ def insideout_DL(T, in_m_list):
 	
 	#
 	# We first create a list of partial contractions of ket-T to the 
-	# messages, and bra-T to the messages. The outgoing messages will
-	# then be the result of cross-contractions of tensors between these
-	# two lists.
+	# messages. The outgoing messages will then be the result of 
+	# cross-contractions of tensors between these ket tensors and similar
+	# "bra" tensors, which are contraction of the bra tensors to the
+	# messages.
 	#
 	
 	ketT = T
-	braT = conj(T)
-	
 	ket_Ts = [ketT]
-	bra_Ts = [braT]
 	
 	#
-	# Contract messages legs_no-1, legs_no-2, ..., 1 to T_ket  AND
-	# 1,2, ..., legs_no-1 to Tbra
+	# Contract messages legs_no-1, legs_no-2, ..., 1 to T_ket
 	#
 	
 	for leg in range(legs_no-1):
 		
 		ketT = tensordot(ketT, in_m_list[legs_no-1-leg], axes=([legs_no-leg],[0]))
-		braT = tensordot(braT, in_m_list[leg], axes=([1],[1]))
-
 		ket_Ts.append(ketT)
-		bra_Ts.append(braT)
 		
 
 	#
@@ -1673,11 +1672,19 @@ def insideout_DL(T, in_m_list):
 	
 	invL = [0] + list(range(legs_no, 1, -1))
 	
+	braT = conj(T)
 	for i in range(legs_no):
 		
 		ket_axes = invL[:(legs_no-i)] + list(range(1, i+1))
 		
-		out_m = tensordot(ket_Ts[legs_no-i-1], bra_Ts[i], axes=(ket_axes, bra_axes))
+		out_m = tensordot(ket_Ts[legs_no-i-1], braT, axes=(ket_axes, bra_axes))
+		
+		if i<legs_no-1:
+			#
+			# Update the "bra" tensor by contracting the i'th message to
+			# its first leg
+			#
+			braT = tensordot(braT, in_m_list[i], axes=([1],[1]))
 		
 		#
 		# Make the outgoing message explicitly hermitian
