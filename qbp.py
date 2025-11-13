@@ -110,6 +110,11 @@
 # 18-Sep-2025: Added "r" to the comment prefactor at the beginning of 
 #              each function.
 #
+# 13-Nov-2025: Condition the phase-normalization of each message by
+#              requiring that the trace/sum of the message is bigger
+#              then some threshold stored in TR_NORM_EPS. This way
+#              we avoid dividing by zero.
+#
 
 
 import numpy as np
@@ -1872,6 +1877,8 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 	
 	
 	"""
+	
+	TR_NORM_EPS = 1e-50
 
 	elog = False
 	
@@ -2053,24 +2060,29 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		
 				if mode=='DL':
 					#
-					# Normalize according to the trace norm
+					# Normalize according to the trace norm and make sure
+					# that the trace of matrix message is a positive real.
 					#
 					nr = norm(out_m_list[l], ord='nuc')
 					out_m_list[l] = out_m_list[l]/nr
 					tr = trace(out_m_list[l])
-					tr_phase = tr/abs(tr)
-					out_m_list[l] = out_m_list[l]/tr_phase
+					if abs(tr)>TR_NORM_EPS:
+						tr_phase = tr/abs(tr)
+						out_m_list[l] = out_m_list[l]/tr_phase
 				else:
 					#
 					# Normalize in the L_1 norm (as if we're dealing with probs)
+					# and make sure that the sum of each message is a positive
+					# real.
 					#
 					nr = norm(out_m_list[l], ord=1)
 					out_m_list[l] = out_m_list[l]/nr
 					tr = sum(out_m_list[l])
-					tr_phase = tr/abs(tr)
-					out_m_list[l] = out_m_list[l]/tr_phase
+					if abs(tr)>TR_NORM_EPS:
+						tr_phase = tr/abs(tr)
+						out_m_list[l] = out_m_list[l]/tr_phase
 								
-				#
+					#
 				# Find the vertex j to which the message goes, and 
 				# then find the old i->j message.
 				#
