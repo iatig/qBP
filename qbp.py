@@ -131,6 +131,11 @@
 #              Also introduced dp_to_sp() function to reduce the
 #              precision from double to single (used in the '-SP' cases).
 #
+# 24-Nov-2025: In qbp(), the DL mode, make the initial BP messages 
+#              precision follow INSIDEOUT_DL_BACKEND precision, so that 
+#              the output BP messages of qbp will follow the precision
+#              of INSIDEOUT_DL_BACKEND.
+#
 
 
 import numpy as np
@@ -153,7 +158,7 @@ from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 # precision). When '-SP' is specified, the precision is *always* reduced
 # to single-precision in the insideout_DL() function.
 #
-INSIDEOUT_DL_BACKEND = 'CUDA-SP'
+INSIDEOUT_DL_BACKEND = 'NP-SP'
 
 
 if INSIDEOUT_DL_BACKEND in ['CUDA', 'CUDA-SP']:
@@ -2255,6 +2260,9 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 						message = message/trace(message)
 					else:
 						message = eye(D)/D
+						
+					if INSIDEOUT_DL_BACKEND in ['NP-SP', 'CUDA-SP']:
+						message = message.astype(np.float32)
 
 				else:
 					#
