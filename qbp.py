@@ -139,13 +139,20 @@
 # 15-Mar-2026: Removed all the clusterBP functions, moved them to an
 #              offline project
 #
-
+# 21-Jun-2026: Introduced initial support for using bra tensors in 
+#              in the DL mode (i.e., calculate <phi|psi>). This includes
+#              optional braT_list in qbp and get_Bethe_free_energy 
+#              functions. Currently not supported in CUDA.
+#              Also: use numpy sum instead of python sum.
+#
+#
+########################################################################
 
 import numpy as np
 
 from numpy.linalg import norm
 from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
-	eye, log, pi
+	eye, log, pi, sum
 
 #
 # The computational backend of the insideout_DL function. Should
@@ -162,7 +169,8 @@ from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 # to single-precision in the insideout_DL() function.
 #
 
-INSIDEOUT_DL_BACKEND = 'NP'
+INSIDEOUT_DL_BACKEND = 'NP-SP'
+#INSIDEOUT_DL_BACKEND = 'CUDA-SP'
 
 
 if INSIDEOUT_DL_BACKEND in ['CUDA', 'CUDA-SP']:
@@ -260,7 +268,7 @@ def adj_vert(v, e, e_dict):
 #
 # ------------------  get_Bethe_free_energy   --------------------------
 #
-def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
+def get_Bethe_free_energy(m_list, T_list, e_list, e_dict, braT_list=None):
 
 	r"""
 
@@ -278,6 +286,11 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	           m_list[i][j]  is the converged i->j message.
 
 	T_list, e_list, e_dict --- TN structure.
+	
+	braT_list --- An optional bra tensors list when in the DL mode. 
+	              If given, we calculate the contraction of <phi|psi>.
+	              Otherwise, we calculate the contraction of <psi|psi>
+	              
 
 	Output:
 	--------
@@ -296,14 +309,21 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 
 	if len(T_list[0].shape)==len(e_list[0]):
 		#
-		# Classical mode --- there's no physical leg to the local tensor
+		# Single layer mode --- there's no physical leg to the local tensor
 		#
-		mode = 'C'
+		mode = 'SL'
+		if braT_list is not None:
+			print("error in get_Bethe_free_energy: braT_list cannot be given"\
+				"when running in SL mode")
+			exit(1)
+			
+			
+			
 	else:
 		#
-		# Quantum mode --- local tensor has a phyical leg
+		# Double layer mode --- local tensor has a phyical leg
 		#
-		mode = 'Q'
+		mode = 'DL'
 
 	if elog:
 		print(f"Entering get_Bethe_free_energy in {mode} mode")
@@ -331,14 +351,14 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 		i,i_leg, j,j_leg = e_dict[e]
 
 
-		if mode=='C':
+		if mode=='SL':
 			#
-			# We're on classical mode; messages are vectors
+			# We're on single-layer mode; messages are vectors
 			#
 			msg_overlap = sum(m_list[i][j]*m_list[j][i])
 		else:
 			#
-			# We're on quantum mode; messages are matrices
+			# We're on double-layer mode; messages are matrices
 			#
 			msg_overlap = trace( m_list[i][j]@(m_list[j][i]).T )
 
@@ -365,7 +385,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 			except FloatingPointError:
 				print("error: msg_overlap=",msg_overlap, "nr=", nr)
 				print("message norms: ", norm(m_list[i][j]), norm(m_list[j][i]))
-				exit(0)
+				exit(1)
 
 
 
@@ -374,9 +394,9 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 	# the normalized incoming messages with T_i
 	#
 
-	if mode=='C':
+	if mode=='SL':
 		#
-		# Classical mode
+		# Single-layer mode
 		#
 		for i in range(n):
 
@@ -410,7 +430,7 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 
 	else:
 		#
-		# Quantum mode
+		# Double-layer mode
 		#
 
 		for i in range(n):
@@ -427,7 +447,10 @@ def get_Bethe_free_energy(m_list, T_list, e_list, e_dict):
 
 				M = tensordot(M, m_list[j][i],axes=([1],[0]))
 
-			M = dot(M.flatten(), conj(T_list[i].flatten()))
+			if braT_list is None:
+				M = dot(M.flatten(), conj(T_list[i].flatten()))
+			else:
+				M = dot(M.flatten(), braT_list[i].flatten())
 
 			#
 			# At this point, M is the contraction of the ket with all the
@@ -654,19 +677,22 @@ def insideout_DL_cuda(T1, in_m_list1):
 # ----------------------- insideout_DL_np --------------------------------
 #
 
-def insideout_DL_np(T, in_m_list):
+def insideout_DL_np(T, braT, in_m_list):
 
 	r"""
 
 	A DOUBLE-LAYER inside-out using numpy tensordot
 
-	Given a ket tensor T and a list of incoming messages, calculate the
-	outgoing BP messages
+	Given a ket tensor T (and an optional bra tensor braT), and a list 
+	of incoming messages, calculate the outgoing BP messages
 
 	Input Parameters:
 	-------------------
 
-	T         --- The ket tensors. Should be of the form [d, D0, D1, D2, ...]
+	T         --- The ket tensor. Should be of the form [d, D0, D1, D2, ...]
+	
+	braT      --- An optional bra tensor. If braT=None, then we use conj(T)
+	              as the bra tensor.
 
 	in_m_list --- The incoming messages. If T has k logical legs, then
 	              there would be k incoming messages, ordered by the legs.
@@ -739,7 +765,9 @@ def insideout_DL_np(T, in_m_list):
 
 	invL = [0] + list(range(legs_no, 1, -1))
 
-	braT = conj(T)
+	if braT is None:
+		braT = conj(T)
+		
 	for i in range(legs_no):
 
 		ket_axes = invL[:(legs_no-i)] + list(range(1, i+1))
@@ -754,9 +782,12 @@ def insideout_DL_np(T, in_m_list):
 			braT = tensordot(braT, in_m_list[i], axes=([1],[1]))
 
 		#
-		# Make the outgoing message explicitly hermitian
+		# When the bra tensor is not given, we work in the <psi|psi> DL mode, 
+		# and therefore the outgoing message should be hermitian. In such 
+		# case, we *force* it to be hermitian for better stability.
 		#
-		out_m = 0.5*(out_m + conj(out_m.T))
+		if braT is None:
+			out_m = 0.5*(out_m + conj(out_m.T))
 
 		out_m_list.append(out_m)
 
@@ -769,7 +800,7 @@ def insideout_DL_np(T, in_m_list):
 #
 # -----------------------    insideout_DL    ---------------------------
 #
-def insideout_DL(T, in_m_list):
+def insideout_DL(T, braT, in_m_list):
 	r"""
 
 	A wrapper function for the insideout_DL function, calling either
@@ -782,6 +813,9 @@ def insideout_DL(T, in_m_list):
 
 	if INSIDEOUT_DL_BACKEND in ['NP-SP', 'CUDA-SP']:
 		T = dp_to_sp(T)
+		if braT is not None:
+			braT = dp_to_sp(braT)
+			
 		for i in range(len(in_m_list)):
 			in_m_list[i] = dp_to_sp(in_m_list[i])
 
@@ -790,9 +824,13 @@ def insideout_DL(T, in_m_list):
 	#
 
 	if INSIDEOUT_DL_BACKEND in ['NP-SP', 'NP']:
-		return insideout_DL_np(T, in_m_list)
+		return insideout_DL_np(T, braT, in_m_list)
 
 	else:
+		if braT is not None:
+			print("Error in insideout_DL: DL <phi|psi> mode not implemented "\
+				"in CUDA yet!")
+			exit(1)
 		return insideout_DL_cuda(T, in_m_list)
 
 
@@ -895,7 +933,7 @@ def insideout_SL(T, in_m_list, direction='A'):
 #
 
 def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
-	delta=1e-6, damping=0.2, vorder='sequential'):
+	delta=1e-6, damping=0.2, vorder='sequential', braT_list=None):
 
 	r"""
 
@@ -998,6 +1036,11 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 
 	if len(T_list[0].shape)==len(e_list[0]):
 		mode='SL'  # Single-Layer mode
+		if braT_list is not None:
+			print(f"qbp error: braT_list should not be given when running in SL mode")
+			exit(1)
+
+			
 	else:
 		mode='DL'  # Double-Layer mode (there's an extra phyiscal leg)
 
@@ -1100,7 +1143,10 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		if mode=='SL':
 			mode_s='Single-Layer'
 		else:
-			mode_s = 'Double-Layer'
+			if braT_list is None:
+				mode_s = 'Double-Layer <psi|psi>'
+			else:
+				mode_s = 'Double-Layer <phi|psi>'
 
 		print("\n\n")
 		print(f"Entering main qbp loop in {mode_s} mode")
@@ -1138,6 +1184,11 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		for i in vertices_order:
 
 			T = T_list[i]
+			if braT_list is not None:
+				braT = braT_list[i]
+			else:
+				braT = None
+				
 			legs_no = len(e_list[i])
 
 			#
@@ -1158,7 +1209,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 			# (either in DL mode or in the SL mode)
 			#
 			if mode=='DL':
-				out_m_list = insideout_DL(T, in_m_list)
+				out_m_list = insideout_DL(T, braT, in_m_list)
 			else:
 				out_m_list = insideout_SL(T, in_m_list)
 
@@ -1170,17 +1221,42 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 
 				if mode=='DL':
 					#
-					# Normalize according to the trace norm and make sure
-					# that the trace of matrix message is a positive real.
+					# We are working with matrix messages. If we are in <psi|psi>
+					# mode (braT_list is None), then we normalize the message
+					# by its L_1 norm and make sure that its trace > 0 (by
+					# adjusting its overall phase). On the other hand, if we
+					# are in the <phi|psi> case, just treat the matrix message
+					# as a huge vector and normalize by the total sum of the 
+					# entries
 					#
-					nr = norm(out_m_list[l], ord='nuc')
-					out_m_list[l] = out_m_list[l]/nr
-					tr = trace(out_m_list[l])
-					if abs(tr)>TR_NORM_EPS:
-						tr_phase = tr/abs(tr)
-						out_m_list[l] = out_m_list[l]/tr_phase
+					
+					if braT_list is None:
+						#
+						# We work with <psi|psi> . BP messages should be treated
+						# like density matrices
+						#
+						nr = norm(out_m_list[l], ord='nuc')
+						out_m_list[l] = out_m_list[l]/nr
+						
+						tr = trace(out_m_list[l])
+						if abs(tr)>TR_NORM_EPS:
+							tr_phase = tr/abs(tr)
+							out_m_list[l] = out_m_list[l]/tr_phase
+						
+					else:
+						#
+						# we work with <phi|psi> . BP messages should be treated
+						# like abstract vectors, and we normalize by total sum.
+						#
+						
+						nr = sum(out_m_list[l])
+						if nr>TR_NORM_EPS:
+							out_m_list[l] = out_m_list[l]/nr
+						
 				else:
 					#
+					# We are in the SL mode:
+					# 
 					# Normalize in the L_1 norm (as if we're dealing with probs)
 					# and make sure that the sum of each message is a positive
 					# real.
@@ -1203,12 +1279,15 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 				j = (i1 if i1 !=i else j1)
 
 				#
-				# Calculate the L_1 normalized error (both in DL and SL modes)
+				# Calculate the normalized error: use the matrix L_1 in the
+				# DL case, and the vector L_1 in the SL case
 				#
 				if mode=='DL':
-					err += norm(m_list[i][j] - out_m_list[l], ord='nuc')
+					local_err = norm(m_list[i][j] - out_m_list[l], ord='nuc')
 				else:
-					err += norm(m_list[i][j] - out_m_list[l], ord=1)
+					local_err = norm(m_list[i][j] - out_m_list[l], ord=1)
+					
+				err += local_err
 
 				err_n += 1
 
