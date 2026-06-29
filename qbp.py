@@ -145,6 +145,12 @@
 #              functions. Currently not supported in CUDA.
 #              Also: use numpy sum instead of python sum.
 #
+# 29-Jun-2026: 1) In the initialization of messages in the DL + braT
+#              mode make sure that we support the case when 
+#              D_ket != D_bra. 2) In the normalization part in the BP 
+#              loop in the DL+braT mode, use abs(nr) instead of nr
+#              when checking if normalization is needed. 
+#
 #
 ########################################################################
 
@@ -169,7 +175,7 @@ from numpy import sqrt, dot, vdot, tensordot, array, zeros, ones, conj, trace,\
 # to single-precision in the insideout_DL() function.
 #
 
-INSIDEOUT_DL_BACKEND = 'NP-SP'
+INSIDEOUT_DL_BACKEND = 'NP'
 #INSIDEOUT_DL_BACKEND = 'CUDA-SP'
 
 
@@ -1069,7 +1075,6 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 		# initialize a 2D list of size n\times n which holds the i->j
 		# message
 		#
-
 		m_list = [ [None]*n for i in range(n)]
 
 		#
@@ -1097,19 +1102,38 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 
 				if mode=='DL':
 					#
-					# We are on double-layer mode --- our messages are PSD matrices
+					# We are on double-layer mode. In such case the messages are
+					# matrices.
 					#
+					# If braT not given, or if it is given and has the same 
+					# bond-dim as ketT, then the message is a square matrix and
+					# we make it a PSD. 
+					#
+					# Otherwise, make a PSD out of the minimal square matrix
+					# and embed it the full matrix
+					#
+					
 					D = T_list[i].shape[leg+1]
-
+					if braT_list is None:
+						braD = D
+					else:
+						braD = braT_list[i].shape[leg+1]
+					
+					minD = min(D, braD)
+					
 					if initial_m=='R':
 						#
 						# Use random PSD
 						#
-						ms = np.random.normal(size=[D,D])
-						message = ms@ms.T
-						message = message/trace(message)
+						ms = np.random.normal(size=[minD,minD])
+						message1 = ms@ms.T
+						message1 = message1/trace(message1)
 					else:
-						message = eye(D)/D
+						message1 = eye(minD)/minD
+					
+					message = zeros([D, braD])
+					message[:minD, :minD] = message1
+						
 						
 					if INSIDEOUT_DL_BACKEND in ['NP-SP', 'CUDA-SP']:
 						message = message.astype(np.float32)
@@ -1250,7 +1274,7 @@ def qbp(T_list, e_list, e_dict=None, initial_m='U', max_iter=10000, \
 						#
 						
 						nr = sum(out_m_list[l])
-						if nr>TR_NORM_EPS:
+						if abs(nr)>TR_NORM_EPS:
 							out_m_list[l] = out_m_list[l]/nr
 						
 				else:
